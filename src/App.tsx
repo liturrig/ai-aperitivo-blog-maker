@@ -35,9 +35,12 @@ import {
   Trash2,
   History,
   Check,
+  LogOut,
 } from "lucide-react";
 import { MacroGroup } from "./components/MacroGroup";
 import { NewsEditor } from "./components/NewsEditor";
+import { LoginPage } from "./components/LoginPage";
+import { WelcomePage } from "./components/WelcomePage";
 import {
   buildPreviewHTML,
   fetchHTML,
@@ -59,7 +62,12 @@ import {
   type SavedProject,
 } from "./lib/storage";
 
+const AUTH_KEY = "aperitivo:auth";
+
 export default function App() {
+  const [authUser, setAuthUser] = useState<string | null>(() => {
+    try { return localStorage.getItem(AUTH_KEY); } catch { return null; }
+  });
   const [url, setUrl] = useState("https://aisocratic.org/blog/ai-socratic-may-2026");
   const [proxy, setProxy] = useState(PROXIES[0]);
   const [loading, setLoading] = useState(false);
@@ -263,6 +271,27 @@ export default function App() {
       setSavedProjects(listProjects());
       setJustSaved(true);
     }
+  }
+
+  function handleLogin(username: string) {
+    try { localStorage.setItem(AUTH_KEY, username); } catch { /* noop */ }
+    setAuthUser(username);
+    setSavedProjects(listProjects());
+  }
+
+  function handleLogout() {
+    try { localStorage.removeItem(AUTH_KEY); } catch { /* noop */ }
+    setAuthUser(null);
+    setModel(null);
+    setPreviewURL("");
+    setPendingOverwrite(null);
+  }
+
+  function backToWelcome() {
+    setModel(null);
+    setPreviewURL("");
+    setPendingOverwrite(null);
+    setSavedProjects(listProjects());
   }
 
   function enterPreviewEdit() {
@@ -489,15 +518,48 @@ export default function App() {
     a.click();
   }
 
+  // ─── Login & Welcome routing ─────────────────────────────────────────────
+  if (!authUser) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+  if (!model) {
+    return (
+      <WelcomePage
+        username={authUser}
+        savedProjects={savedProjects}
+        loading={loading}
+        initialURL={url}
+        onLoadURL={(u) => {
+          setUrl(u);
+          // Inline overwrite banner appears via handleLoad when needed
+          // Need to use setTimeout to ensure url state is updated before handleLoad reads it
+          setTimeout(() => handleLoad(), 0);
+        }}
+        onResume={(p) => adoptModel(p.model)}
+        onDelete={(p) => {
+          if (window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) {
+            deleteProject(p.url);
+            setSavedProjects(listProjects());
+          }
+        }}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-ink-900 text-ink-100">
       <header className="px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex items-center gap-4 sticky top-0 z-10">
-        <div className="flex items-center gap-2 font-semibold">
+        <button
+          onClick={backToWelcome}
+          className="flex items-center gap-2 font-semibold hover:opacity-80 transition"
+          title="Torna alla dashboard"
+        >
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
             <Newspaper size={16} className="text-ink-950" />
           </div>
-          <span className="text-sm tracking-tight">AI Aperitivo · Blog Reorder</span>
-        </div>
+          <span className="text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+        </button>
 
         <div className="flex-1 flex items-center gap-2 max-w-2xl">
           <div className="relative flex-1">
@@ -586,6 +648,15 @@ export default function App() {
                        text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
             <Download size={14} /> Scarica HTML
+          </button>
+          <div className="w-px h-6 bg-ink-600 mx-1" />
+          <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
+          <button
+            onClick={handleLogout}
+            className="px-2.5 py-2 rounded-lg border border-ink-600 hover:border-red-500 hover:text-red-400 text-xs flex items-center gap-1.5 transition"
+            title="Logout"
+          >
+            <LogOut size={12} />
           </button>
         </div>
       </header>
