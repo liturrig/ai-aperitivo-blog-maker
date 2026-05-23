@@ -21,18 +21,14 @@ import {
 } from "@dnd-kit/sortable";
 import {
   Download,
-  Loader2,
   RotateCcw,
   Newspaper,
-  Link as LinkIcon,
-  Sparkles,
   Plus,
   Maximize2,
   Minimize2,
   X,
   Pencil,
   Save as SaveIcon,
-  Trash2,
   History,
   Check,
   LogOut,
@@ -55,9 +51,9 @@ import {
 } from "./lib/parser";
 import {
   saveProject,
-  loadProject,
   listProjects,
   deleteProject,
+  newProjectId,
   formatRelative,
   type SavedProject,
 } from "./lib/storage";
@@ -68,6 +64,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState<string | null>(() => {
     try { return localStorage.getItem(AUTH_KEY); } catch { return null; }
   });
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [url, setUrl] = useState("https://aisocratic.org/blog/ai-socratic-may-2026");
   const [proxy, setProxy] = useState(PROXIES[0]);
   const [loading, setLoading] = useState(false);
@@ -86,8 +83,6 @@ export default function App() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() => listProjects());
-  const [projectsOpen, setProjectsOpen] = useState(false);
-  const [pendingOverwrite, setPendingOverwrite] = useState<SavedProject | null>(null);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
@@ -194,16 +189,27 @@ export default function App() {
   // Paused while previewEditMode is on so intermediate inline edits aren't persisted
   // until the user confirms or discards them.
   useEffect(() => {
-    if (!model) return;
+    if (!model || !currentProjectId) return;
     if (previewEditMode) return;
     const t = setTimeout(() => {
-      if (saveProject(model)) {
-        setLastSavedAt(Date.now());
+      const existing = savedProjects.find((p) => p.id === currentProjectId);
+      const now = Date.now();
+      const project: SavedProject = {
+        id: currentProjectId,
+        url: model.baseHref,
+        title: model.header?.title || model.baseHref,
+        createdAt: existing?.createdAt ?? now,
+        savedAt: now,
+        model,
+      };
+      if (saveProject(project)) {
+        setLastSavedAt(now);
         setSavedProjects(listProjects());
       }
     }, 700);
     return () => clearTimeout(t);
-  }, [model, previewEditMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, currentProjectId, previewEditMode]);
 
   // Brief "Salvato!" confirmation flash on the Salva button
   useEffect(() => {
@@ -220,24 +226,30 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen]);
 
-  async function handleLoad(opts: { forceFresh?: boolean } = {}) {
+  /** Fetch a URL fresh and start a NEW project (independent id, even if URL is reused). */
+  async function startNewProject(rawUrl: string) {
     setError(null);
-    setPendingOverwrite(null);
-    if (!opts.forceFresh) {
-      const saved = loadProject(url);
-      if (saved) {
-        // Surface the conflict inline; no confirm dialog
-        setPendingOverwrite(saved);
-        return;
-      }
-    }
     setLoading(true);
     setModel(null);
     setPreviewURL("");
     try {
-      const html = await fetchHTML(url, proxy);
-      const parsed = parseBlog(html, url);
+      const html = await fetchHTML(rawUrl, proxy);
+      const parsed = parseBlog(html, rawUrl);
+      const id = newProjectId();
+      const now = Date.now();
+      const project: SavedProject = {
+        id,
+        url: rawUrl,
+        title: parsed.header?.title || rawUrl,
+        createdAt: now,
+        savedAt: now,
+        model: parsed,
+      };
+      saveProject(project);
+      setCurrentProjectId(id);
       adoptModel(parsed);
+      setSavedProjects(listProjects());
+      setUrl(rawUrl);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg + " — prova a cambiare CORS proxy.");
@@ -248,26 +260,60 @@ export default function App() {
 
   function adoptModel(m: BlogModel) {
     setModel(m);
-    setUrl(m.baseHref);
     setInitialMacroOrder(
       m.macros.map((mc) => mc.id + ":" + mc.items.map((i) => i.id).join(",")).join("|")
     );
   }
 
   function resumeProject(p: SavedProject) {
+    setCurrentProjectId(p.id);
+    setUrl(p.url);
     adoptModel(p.model);
   }
 
   function removeSavedProject(p: SavedProject) {
     if (!window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) return;
-    deleteProject(p.url);
+    deleteProject(p.id);
     setSavedProjects(listProjects());
+    if (currentProjectId === p.id) {
+      // We just deleted the open project; bounce to dashboard
+      setCurrentProjectId(null);
+      setModel(null);
+      setPreviewURL("");
+    }
+  }
+
+  async function reloadFromOriginal() {
+    if (!model || !currentProjectId) return;
+    if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
+    setLoading(true);
+    try {
+      const html = await fetchHTML(model.baseHref, proxy);
+      const parsed = parseBlog(html, model.baseHref);
+      adoptModel(parsed);
+      // Auto-save will persist the refreshed model into the same project id
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg + " — prova a cambiare CORS proxy.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function saveNow() {
-    if (!model) return;
-    if (saveProject(model)) {
-      setLastSavedAt(Date.now());
+    if (!model || !currentProjectId) return;
+    const existing = savedProjects.find((p) => p.id === currentProjectId);
+    const now = Date.now();
+    const project: SavedProject = {
+      id: currentProjectId,
+      url: model.baseHref,
+      title: model.header?.title || model.baseHref,
+      createdAt: existing?.createdAt ?? now,
+      savedAt: now,
+      model,
+    };
+    if (saveProject(project)) {
+      setLastSavedAt(now);
       setSavedProjects(listProjects());
       setJustSaved(true);
     }
@@ -284,13 +330,13 @@ export default function App() {
     setAuthUser(null);
     setModel(null);
     setPreviewURL("");
-    setPendingOverwrite(null);
+    setCurrentProjectId(null);
   }
 
   function backToWelcome() {
     setModel(null);
     setPreviewURL("");
-    setPendingOverwrite(null);
+    setCurrentProjectId(null);
     setSavedProjects(listProjects());
   }
 
@@ -505,8 +551,7 @@ export default function App() {
     setEditing({ kind: "macro", macroId: mac.id });
   }
   function resetOrder() {
-    if (!model) return;
-    handleLoad({ forceFresh: true });
+    reloadFromOriginal();
   }
 
   function handleDownload() {
@@ -529,19 +574,9 @@ export default function App() {
         savedProjects={savedProjects}
         loading={loading}
         initialURL={url}
-        onLoadURL={(u) => {
-          setUrl(u);
-          // Inline overwrite banner appears via handleLoad when needed
-          // Need to use setTimeout to ensure url state is updated before handleLoad reads it
-          setTimeout(() => handleLoad(), 0);
-        }}
-        onResume={(p) => adoptModel(p.model)}
-        onDelete={(p) => {
-          if (window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) {
-            deleteProject(p.url);
-            setSavedProjects(listProjects());
-          }
-        }}
+        onLoadURL={(u) => startNewProject(u)}
+        onResume={(p) => resumeProject(p)}
+        onDelete={(p) => removeSavedProject(p)}
         onLogout={handleLogout}
       />
     );
@@ -561,46 +596,22 @@ export default function App() {
           <span className="text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
         </button>
 
-        <div className="flex-1 flex items-center gap-2 max-w-2xl">
-          <div className="relative flex-1">
-            <LinkIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleLoad()}
-              placeholder="https://aisocratic.org/blog/..."
-              className="w-full pl-9 pr-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm
-                         focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-            />
-          </div>
-          <button
-            onClick={() => handleLoad()}
-            disabled={loading}
-            className="px-4 py-2 rounded-lg bg-brand hover:bg-brand/90 disabled:opacity-50
-                       text-white text-sm font-medium flex items-center gap-2 transition"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {loading ? "Carico…" : "Carica"}
-          </button>
+        <div className="flex-1 flex items-center gap-2 min-w-0">
+          <span className="text-xs text-ink-300 truncate">
+            <span className="text-ink-100 font-medium">{model.header?.title || "(senza titolo)"}</span>
+            <span className="opacity-60 mx-2">·</span>
+            <code className="text-brand-400">{model.baseHref}</code>
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              setSavedProjects(listProjects());
-              setProjectsOpen(true);
-            }}
+            onClick={backToWelcome}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand
-                       text-sm flex items-center gap-2 transition relative"
-            title="Sfoglia i progetti salvati"
+                       text-sm flex items-center gap-2 transition"
+            title="Torna alla dashboard"
           >
             <History size={13} /> Progetti
-            {savedProjects.length > 0 && (
-              <span className="text-[10px] font-bold bg-brand text-white px-1.5 py-0.5 rounded-full leading-none">
-                {savedProjects.length}
-              </span>
-            )}
           </button>
           {lastSavedAt && model && (
             <span
@@ -670,108 +681,7 @@ export default function App() {
             </div>
           )}
 
-          {pendingOverwrite && (
-            <div className="mb-4 p-4 rounded-xl border border-brand/40 bg-brand/10 text-ink-100">
-              <div className="flex items-start gap-3">
-                <SaveIcon size={18} className="text-brand-400 mt-0.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold mb-1">
-                    Esiste già un progetto salvato per questo URL
-                  </div>
-                  <div className="text-xs text-ink-300 mb-3">
-                    <span className="text-ink-100">{pendingOverwrite.title}</span> ·
-                    salvato {formatRelative(pendingOverwrite.savedAt)} ·
-                    <code className="text-brand-400 ml-1">{pendingOverwrite.url}</code>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        adoptModel(pendingOverwrite.model);
-                        setPendingOverwrite(null);
-                      }}
-                      className="px-3 py-1.5 rounded-md bg-brand hover:brightness-110 text-white text-xs font-semibold"
-                    >
-                      Riprendi salvato
-                    </button>
-                    <button
-                      onClick={() => {
-                        const p = pendingOverwrite;
-                        setPendingOverwrite(null);
-                        // Force a fresh fetch — will overwrite the saved version on first edit
-                        handleLoad({ forceFresh: true });
-                        void p;
-                      }}
-                      className="px-3 py-1.5 rounded-md border border-ink-600 hover:border-mint hover:text-mint text-xs font-semibold"
-                    >
-                      Scarica originale (sovrascrivi al primo edit)
-                    </button>
-                    <button
-                      onClick={() => setPendingOverwrite(null)}
-                      className="px-3 py-1.5 rounded-md border border-ink-600 hover:border-ink-500 text-xs"
-                    >
-                      Annulla
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
-          {!model && !loading && !error && (
-            <>
-              <div className="rounded-xl border border-dashed border-ink-600 p-8 text-center text-ink-300">
-                <Newspaper className="mx-auto mb-3 text-ink-500" size={32} />
-                <p className="text-sm">
-                  Inserisci l'URL di un blog post di{" "}
-                  <code className="text-brand-400">aisocratic.org</code> e clicca{" "}
-                  <span className="text-ink-100 font-medium">Carica</span>.
-                </p>
-              </div>
-
-              {savedProjects.length > 0 && (
-                <div className="mt-6">
-                  <h3 className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-bold text-ink-300 mb-3">
-                    <History size={12} /> Progetti salvati ({savedProjects.length})
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    {savedProjects.map((p) => (
-                      <div
-                        key={p.url}
-                        className="group flex items-center gap-3 rounded-lg border border-ink-600
-                                   bg-ink-800 hover:bg-ink-700 hover:border-brand/60 transition px-3 py-2.5"
-                      >
-                        <div
-                          onClick={() => resumeProject(p)}
-                          className="flex-1 min-w-0 cursor-pointer"
-                          title="Riprendi questo progetto"
-                        >
-                          <div className="font-medium text-sm text-ink-100 truncate">{p.title}</div>
-                          <div className="text-[11px] text-ink-300 truncate flex items-center gap-2">
-                            <span>{formatRelative(p.savedAt)}</span>
-                            <span className="opacity-60">·</span>
-                            <code className="text-brand-400 truncate">{p.url}</code>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => resumeProject(p)}
-                          className="text-[11px] px-2.5 py-1 rounded bg-brand hover:brightness-110 text-white font-semibold whitespace-nowrap"
-                        >
-                          Riprendi
-                        </button>
-                        <button
-                          onClick={() => removeSavedProject(p)}
-                          className="w-7 h-7 rounded border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                          title="Elimina progetto salvato"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
 
           {model && (
             <>
@@ -933,89 +843,6 @@ export default function App() {
           </div>
         </section>
       </main>
-
-      {/* Saved projects drawer */}
-      {projectsOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-ink-950/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={(e) => e.target === e.currentTarget && setProjectsOpen(false)}
-        >
-          <div className="w-full max-w-2xl max-h-[80vh] flex flex-col bg-ink-900 border border-ink-600 rounded-2xl shadow-2xl overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-ink-600 bg-ink-800">
-              <History size={16} className="text-brand-400" />
-              <h2 className="flex-1 font-semibold text-ink-100">
-                Progetti salvati ({savedProjects.length})
-              </h2>
-              <button
-                onClick={() => setProjectsOpen(false)}
-                className="w-8 h-8 rounded-md border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center"
-                aria-label="Chiudi"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto scroll-thin p-4">
-              {savedProjects.length === 0 ? (
-                <div className="text-center text-ink-300 py-12">
-                  <History className="mx-auto mb-3 text-ink-500" size={28} />
-                  <p className="text-sm">Nessun progetto salvato.</p>
-                  <p className="text-[11px] mt-2 text-ink-300">
-                    I progetti vengono salvati automaticamente in <code className="text-brand-400">localStorage</code> a ogni modifica.
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {savedProjects.map((p) => {
-                    const isCurrent = model?.baseHref === p.url;
-                    return (
-                      <div
-                        key={p.url}
-                        className={`group flex items-center gap-3 rounded-lg border bg-ink-800
-                                    hover:bg-ink-700 hover:border-brand/60 transition px-3 py-2.5
-                                    ${isCurrent ? "border-brand/60 bg-brand/5" : "border-ink-600"}`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="font-medium text-sm text-ink-100 truncate">{p.title}</div>
-                            {isCurrent && (
-                              <span className="text-[9px] uppercase tracking-widest font-bold bg-brand/20 text-brand-400 px-1.5 py-0.5 rounded">
-                                aperto
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-ink-300 truncate flex items-center gap-2">
-                            <span>Salvato {formatRelative(p.savedAt)}</span>
-                            <span className="opacity-60">·</span>
-                            <code className="text-brand-400 truncate">{p.url}</code>
-                          </div>
-                        </div>
-                        {!isCurrent && (
-                          <button
-                            onClick={() => {
-                              resumeProject(p);
-                              setProjectsOpen(false);
-                            }}
-                            className="text-[11px] px-2.5 py-1 rounded bg-brand hover:brightness-110 text-white font-semibold whitespace-nowrap"
-                          >
-                            Riprendi
-                          </button>
-                        )}
-                        <button
-                          onClick={() => removeSavedProject(p)}
-                          className="w-7 h-7 rounded border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                          title="Elimina progetto salvato"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Editor modal (news or macro-sezione) */}
       {editingTarget && (
