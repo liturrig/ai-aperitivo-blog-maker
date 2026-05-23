@@ -74,7 +74,7 @@ export function LoginPage({ onLogin }: Props) {
                   }}
                   className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm
                              focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                  placeholder="charles"
+                  placeholder=""
                 />
               </div>
               <div>
