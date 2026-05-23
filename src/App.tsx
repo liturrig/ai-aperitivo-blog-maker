@@ -20,7 +20,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
-  Download,
   RotateCcw,
   Newspaper,
   Plus,
@@ -586,15 +585,6 @@ export default function App() {
     reloadFromOriginal();
   }
 
-  function handleDownload() {
-    if (!previewURL) return;
-    const a = document.createElement("a");
-    a.href = previewURL;
-    const slug = (model?.baseHref.split("/").pop() || "blog") + "-reordered";
-    a.download = slug + ".html";
-    a.click();
-  }
-
   // ─── Login & Welcome routing ─────────────────────────────────────────────
   if (!authUser) {
     return <LoginPage onLogin={handleLogin} />;
@@ -688,19 +678,11 @@ export default function App() {
           <button
             onClick={exportCurrent}
             disabled={!model}
-            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand hover:text-brand-400
-                       text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
-            title="Esporta il progetto come file JSON (puoi mandarlo a un amico)"
-          >
-            <FileJson size={13} /> Esporta JSON
-          </button>
-          <button
-            onClick={handleDownload}
-            disabled={!previewURL}
             className="px-3 py-2 rounded-lg bg-mint hover:brightness-110 text-ink-950
                        text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="Esporta il progetto come file JSON (puoi mandarlo a un amico)"
           >
-            <Download size={14} /> Scarica HTML
+            <FileJson size={14} /> Esporta JSON
           </button>
           <div className="w-px h-6 bg-ink-600 mx-1" />
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
@@ -907,10 +889,10 @@ export default function App() {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleDownload}
+                onClick={exportCurrent}
                 className="px-3 py-1.5 rounded-md bg-mint text-ink-950 text-xs font-semibold flex items-center gap-1.5"
               >
-                <Download size={12} /> Scarica HTML
+                <FileJson size={12} /> Esporta JSON
               </button>
               <button
                 onClick={() => setFullscreen(false)}
