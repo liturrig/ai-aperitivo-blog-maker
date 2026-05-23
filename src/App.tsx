@@ -32,6 +32,7 @@ import {
   History,
   Check,
   LogOut,
+  FileJson,
 } from "lucide-react";
 import { MacroGroup } from "./components/MacroGroup";
 import { NewsEditor } from "./components/NewsEditor";
@@ -55,6 +56,8 @@ import {
   deleteProject,
   newProjectId,
   formatRelative,
+  exportProjectToFile,
+  importProjectFromFile,
   type SavedProject,
 } from "./lib/storage";
 
@@ -333,6 +336,35 @@ export default function App() {
     setCurrentProjectId(null);
   }
 
+  function exportCurrent() {
+    if (!model || !currentProjectId) return;
+    const existing = savedProjects.find((p) => p.id === currentProjectId);
+    const now = Date.now();
+    const project: SavedProject = {
+      id: currentProjectId,
+      url: model.baseHref,
+      title: model.header?.title || model.baseHref,
+      createdAt: existing?.createdAt ?? now,
+      savedAt: existing?.savedAt ?? now,
+      model,
+    };
+    exportProjectToFile(project);
+  }
+
+  async function importFromFile(file: File) {
+    try {
+      const project = await importProjectFromFile(file);
+      setSavedProjects(listProjects());
+      // Open the imported project immediately
+      setCurrentProjectId(project.id);
+      setUrl(project.url);
+      adoptModel(project.model);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError("Import fallito: " + msg);
+    }
+  }
+
   function backToWelcome() {
     setModel(null);
     setPreviewURL("");
@@ -577,6 +609,7 @@ export default function App() {
         onLoadURL={(u) => startNewProject(u)}
         onResume={(p) => resumeProject(p)}
         onDelete={(p) => removeSavedProject(p)}
+        onImport={(f) => importFromFile(f)}
         onLogout={handleLogout}
       />
     );
@@ -651,6 +684,15 @@ export default function App() {
                        text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
             <RotateCcw size={13} /> Reset
+          </button>
+          <button
+            onClick={exportCurrent}
+            disabled={!model}
+            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand hover:text-brand-400
+                       text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="Esporta il progetto come file JSON (puoi mandarlo a un amico)"
+          >
+            <FileJson size={13} /> Esporta JSON
           </button>
           <button
             onClick={handleDownload}

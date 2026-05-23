@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Sparkles,
   Link as LinkIcon,
@@ -8,6 +8,7 @@ import {
   Trash2,
   LogOut,
   Plus,
+  Upload,
 } from "lucide-react";
 import { formatRelative, type SavedProject } from "../lib/storage";
 
@@ -19,6 +20,7 @@ type Props = {
   onLoadURL: (url: string) => void;
   onResume: (project: SavedProject) => void;
   onDelete: (project: SavedProject) => void;
+  onImport: (file: File) => void;
   onLogout: () => void;
 };
 
@@ -30,9 +32,11 @@ export function WelcomePage({
   onLoadURL,
   onResume,
   onDelete,
+  onImport,
   onLogout,
 }: Props) {
   const [url, setUrl] = useState(initialURL);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="min-h-full flex flex-col bg-ink-900 text-ink-100">
@@ -140,6 +144,34 @@ export function WelcomePage({
                     <Sparkles size={15} />
                   )}
                   {loading ? "Carico…" : "Inizia"}
+                </button>
+
+                <div className="relative flex items-center gap-3 my-1">
+                  <div className="flex-1 h-px bg-ink-600" />
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-ink-300">oppure</span>
+                  <div className="flex-1 h-px bg-ink-600" />
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onImport(f);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-lg border border-dashed border-ink-600 hover:border-brand hover:text-brand-400
+                             text-ink-300 text-sm font-medium flex items-center justify-center gap-2 transition
+                             disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Importa un file .json esportato da un altro dispositivo"
+                >
+                  <Upload size={14} /> Importa progetto da file JSON
                 </button>
               </div>
             </div>
