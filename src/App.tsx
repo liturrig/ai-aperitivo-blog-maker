@@ -414,7 +414,8 @@ export default function App() {
 
   function exportCurrent() {
     if (!model || !currentProjectId || !authUser) return;
-    const project = buildProjectDocument(savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? Date.now());
+    const existingSavedAt = savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? Date.now();
+    const project = buildProjectDocument(existingSavedAt);
     if (!project) return;
     const snapshot: ProjectSnapshot = { project };
     projectRepository.exportProjectToFile(snapshot);

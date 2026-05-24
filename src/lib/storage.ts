@@ -7,6 +7,8 @@ const PROJECTS_BY_USER_INDEX = "by-userId";
 const SOURCES_STORE = "source-cache";
 
 const LEGACY_PROJECT_PREFIX = "aperitivo:project:";
+// v3 wraps the exported payload as `{ project, syncState }` so the shared project
+// document stays persistence-agnostic while repository-specific sync state travels separately.
 const FILE_FORMAT = "aisocratic-project-v3";
 
 export type ProjectDocument = {
@@ -19,8 +21,8 @@ export type ProjectDocument = {
 };
 
 export type ProjectSyncState = {
-  remoteId?: string | null;
-  revision?: string | null;
+  remoteId: string | null;
+  revision: string | null;
 };
 
 export type ProjectSnapshot = {
@@ -381,9 +383,11 @@ function toStoredProjectRecord(value: unknown): StoredProjectRecord | null {
       userId: normalizeUserId(legacy.userId),
       project,
       syncState: normalizeSyncState({
+        // Legacy exports persisted a numeric GitHub issue number; the repository now
+        // exposes a provider-agnostic string remoteId so other backends can reuse it.
         remoteId:
           typeof legacy.remoteIssueNumber === "number" ? String(legacy.remoteIssueNumber) : null,
-        revision: legacy.remoteRevision,
+        revision: typeof legacy.remoteRevision === "string" ? legacy.remoteRevision : null,
       }),
     };
   }
@@ -408,9 +412,11 @@ function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapsho
     syncState: normalizeSyncState(
       candidate.syncState ||
         candidate.sync || {
+          // Legacy exports persisted a numeric GitHub issue number; the repository now
+          // exposes a provider-agnostic string remoteId so other backends can reuse it.
           remoteId:
             typeof candidate.remoteIssueNumber === "number" ? String(candidate.remoteIssueNumber) : null,
-          revision: candidate.remoteRevision,
+          revision: typeof candidate.remoteRevision === "string" ? candidate.remoteRevision : null,
         }
     ),
   };
