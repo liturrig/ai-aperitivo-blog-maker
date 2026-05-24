@@ -40,7 +40,7 @@ export function LoginPage({ onLogin }: Props) {
                 letterSpacing: "-0.03em",
               }}
             >
-              AI Aperitivo<br />Blog Maker
+              AI Socratic<br />Blog Maker
             </h1>
             <p className="text-ink-300 text-base max-w-md mx-auto">
               Riordina, modifica e personalizza un blog post di AI Socratic

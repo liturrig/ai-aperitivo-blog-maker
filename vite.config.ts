@@ -3,9 +3,9 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
-  // For GitHub Pages: site lives at /<repo-name>/ so the base must match.
+  // Production uses a relative base so the app keeps working even if the repo slug changes.
   // In dev (npm run dev) we still use '/' so the app works at localhost root.
-  base: command === 'build' ? '/ai-aperitivo-blog-maker/' : '/',
+  base: command === 'build' ? './' : '/',
   plugins: [react()],
   server: {
     proxy: {

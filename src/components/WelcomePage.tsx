@@ -46,7 +46,7 @@ export function WelcomePage({
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
             <Newspaper size={16} className="text-ink-950" />
           </div>
-          <span className="text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+          <span className="text-sm tracking-tight">AI Socratic · Blog Maker</span>
         </div>
         <div className="flex-1" />
         <span className="text-xs text-ink-300">
@@ -194,13 +194,13 @@ export function WelcomePage({
 
               {savedProjects.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-center text-ink-300 text-xs italic border border-dashed border-ink-600 rounded-lg p-8">
-                  I progetti vengono salvati automaticamente in localStorage al primo edit.
+                  I progetti vengono salvati automaticamente in IndexedDB al primo edit.
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto scroll-thin pr-1">
                   {savedProjects.map((p) => (
                     <div
-                      key={p.url}
+                      key={p.id}
                       className="group flex items-center gap-3 rounded-lg border border-ink-600
                                  bg-ink-800 hover:bg-ink-700 hover:border-brand/60 transition px-3 py-2.5"
                     >

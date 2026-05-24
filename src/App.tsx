@@ -50,6 +50,8 @@ import {
   type NewsItem,
 } from "./lib/parser";
 import {
+  canonicalizeSourceUrl,
+  loadCachedSource,
   saveProject,
   listProjects,
   deleteProject,
@@ -57,15 +59,36 @@ import {
   formatRelative,
   exportProjectToFile,
   importProjectFromFile,
+  saveCachedSource,
   type SavedProject,
 } from "./lib/storage";
 
-const AUTH_KEY = "aperitivo:auth";
+const AUTH_KEY = "aisocratic:auth";
+const LEGACY_AUTH_KEY = "aperitivo:auth";
+
+function cloneBlogModel(model: BlogModel): BlogModel {
+  if (typeof structuredClone === "function") return structuredClone(model);
+  return JSON.parse(JSON.stringify(model)) as BlogModel;
+}
+
+function readStoredAuthUser(): string | null {
+  try {
+    const current = localStorage.getItem(AUTH_KEY);
+    if (current) return current;
+
+    const legacy = localStorage.getItem(LEGACY_AUTH_KEY);
+    if (!legacy) return null;
+
+    localStorage.setItem(AUTH_KEY, legacy);
+    localStorage.removeItem(LEGACY_AUTH_KEY);
+    return legacy;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
-  const [authUser, setAuthUser] = useState<string | null>(() => {
-    try { return localStorage.getItem(AUTH_KEY); } catch { return null; }
-  });
+  const [authUser, setAuthUser] = useState<string | null>(() => readStoredAuthUser());
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [url, setUrl] = useState("https://aisocratic.org/blog/ai-socratic-may-2026");
   const [proxy, setProxy] = useState(PROXIES[0]);
@@ -85,7 +108,7 @@ export default function App() {
   >(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
-  const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() => listProjects());
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
@@ -105,6 +128,49 @@ export default function App() {
     [model]
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
+
+  async function refreshSavedProjects(userId = authUser) {
+    if (!userId) {
+      setSavedProjects([]);
+      return;
+    }
+    setSavedProjects(await listProjects(userId));
+  }
+
+  async function resolveSourceModel(rawUrl: string): Promise<{ sourceUrl: string; model: BlogModel }> {
+    const sourceUrl = canonicalizeSourceUrl(rawUrl);
+    const cached = await loadCachedSource(sourceUrl);
+    if (cached?.model) {
+      return { sourceUrl, model: cloneBlogModel(cached.model) };
+    }
+
+    const html = await fetchHTML(sourceUrl, proxy);
+    const parsed = parseBlog(html, sourceUrl);
+    await saveCachedSource({
+      sourceUrl,
+      html,
+      model: parsed,
+      fetchedAt: Date.now(),
+    });
+    return { sourceUrl, model: cloneBlogModel(parsed) };
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!authUser) {
+      setSavedProjects([]);
+      return;
+    }
+
+    void (async () => {
+      const projects = await listProjects(authUser);
+      if (!cancelled) setSavedProjects(projects);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
 
   useEffect(() => {
     if (!model) return;
@@ -188,31 +254,35 @@ export default function App() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  // Auto-save model to localStorage (debounced).
+  // Auto-save model to IndexedDB (debounced).
   // Paused while previewEditMode is on so intermediate inline edits aren't persisted
   // until the user confirms or discards them.
   useEffect(() => {
-    if (!model || !currentProjectId) return;
+    if (!model || !currentProjectId || !authUser) return;
     if (previewEditMode) return;
     const t = setTimeout(() => {
       const existing = savedProjects.find((p) => p.id === currentProjectId);
       const now = Date.now();
       const project: SavedProject = {
         id: currentProjectId,
-        url: model.baseHref,
+        userId: authUser,
+        url: canonicalizeSourceUrl(model.baseHref),
+        sourceUrl: canonicalizeSourceUrl(model.baseHref),
         title: model.header?.title || model.baseHref,
         createdAt: existing?.createdAt ?? now,
         savedAt: now,
         model,
       };
-      if (saveProject(project)) {
-        setLastSavedAt(now);
-        setSavedProjects(listProjects());
-      }
+      void (async () => {
+        if (await saveProject(project)) {
+          setLastSavedAt(now);
+          await refreshSavedProjects(authUser);
+        }
+      })();
     }, 700);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, currentProjectId, previewEditMode]);
+  }, [model, currentProjectId, previewEditMode, authUser]);
 
   // Brief "Salvato!" confirmation flash on the Salva button
   useEffect(() => {
@@ -235,28 +305,30 @@ export default function App() {
 
   /** Fetch a URL fresh and start a NEW project (independent id, even if URL is reused). */
   async function startNewProject(rawUrl: string) {
+    if (!authUser) return;
     setError(null);
     setLoading(true);
     setModel(null);
     setPreviewURL("");
     try {
-      const html = await fetchHTML(rawUrl, proxy);
-      const parsed = parseBlog(html, rawUrl);
+      const { sourceUrl, model: parsed } = await resolveSourceModel(rawUrl);
       const id = newProjectId();
       const now = Date.now();
       const project: SavedProject = {
         id,
-        url: rawUrl,
-        title: parsed.header?.title || rawUrl,
+        userId: authUser,
+        url: sourceUrl,
+        sourceUrl,
+        title: parsed.header?.title || sourceUrl,
         createdAt: now,
         savedAt: now,
         model: parsed,
       };
-      saveProject(project);
+      await saveProject(project);
       setCurrentProjectId(id);
       adoptModel(parsed);
-      setSavedProjects(listProjects());
-      setUrl(rawUrl);
+      await refreshSavedProjects(authUser);
+      setUrl(sourceUrl);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg + " — prova a cambiare CORS proxy.");
@@ -275,13 +347,13 @@ export default function App() {
   function resumeProject(p: SavedProject) {
     setCurrentProjectId(p.id);
     setUrl(p.url);
-    adoptModel(p.model);
+    adoptModel(cloneBlogModel(p.model));
   }
 
-  function removeSavedProject(p: SavedProject) {
+  async function removeSavedProject(p: SavedProject) {
     if (!window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) return;
-    deleteProject(p.id);
-    setSavedProjects(listProjects());
+    await deleteProject(p.id);
+    await refreshSavedProjects();
     if (currentProjectId === p.id) {
       // We just deleted the open project; bounce to dashboard
       setCurrentProjectId(null);
@@ -295,9 +367,9 @@ export default function App() {
     if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
     setLoading(true);
     try {
-      const html = await fetchHTML(model.baseHref, proxy);
-      const parsed = parseBlog(html, model.baseHref);
+      const { sourceUrl, model: parsed } = await resolveSourceModel(model.baseHref);
       adoptModel(parsed);
+      setUrl(sourceUrl);
       // Auto-save will persist the refreshed model into the same project id
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -307,46 +379,61 @@ export default function App() {
     }
   }
 
-  function saveNow() {
-    if (!model || !currentProjectId) return;
+  async function saveNow() {
+    if (!model || !currentProjectId || !authUser) return;
     const existing = savedProjects.find((p) => p.id === currentProjectId);
     const now = Date.now();
     const project: SavedProject = {
       id: currentProjectId,
-      url: model.baseHref,
+      userId: authUser,
+      url: canonicalizeSourceUrl(model.baseHref),
+      sourceUrl: canonicalizeSourceUrl(model.baseHref),
       title: model.header?.title || model.baseHref,
       createdAt: existing?.createdAt ?? now,
       savedAt: now,
       model,
     };
-    if (saveProject(project)) {
+    if (await saveProject(project)) {
       setLastSavedAt(now);
-      setSavedProjects(listProjects());
+      await refreshSavedProjects(authUser);
       setJustSaved(true);
     }
   }
 
   function handleLogin(username: string) {
-    try { localStorage.setItem(AUTH_KEY, username); } catch { /* noop */ }
-    setAuthUser(username);
-    setSavedProjects(listProjects());
+    const normalized = username.trim().toLowerCase();
+    try {
+      localStorage.setItem(AUTH_KEY, normalized);
+      localStorage.removeItem(LEGACY_AUTH_KEY);
+    } catch {
+      /* noop */
+    }
+    setAuthUser(normalized);
   }
 
   function handleLogout() {
-    try { localStorage.removeItem(AUTH_KEY); } catch { /* noop */ }
+    try {
+      localStorage.removeItem(AUTH_KEY);
+      localStorage.removeItem(LEGACY_AUTH_KEY);
+    } catch {
+      /* noop */
+    }
     setAuthUser(null);
+    setSavedProjects([]);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
   }
 
   function exportCurrent() {
-    if (!model || !currentProjectId) return;
+    if (!model || !currentProjectId || !authUser) return;
     const existing = savedProjects.find((p) => p.id === currentProjectId);
     const now = Date.now();
     const project: SavedProject = {
       id: currentProjectId,
-      url: model.baseHref,
+      userId: authUser,
+      url: canonicalizeSourceUrl(model.baseHref),
+      sourceUrl: canonicalizeSourceUrl(model.baseHref),
       title: model.header?.title || model.baseHref,
       createdAt: existing?.createdAt ?? now,
       savedAt: existing?.savedAt ?? now,
@@ -356,13 +443,14 @@ export default function App() {
   }
 
   async function importFromFile(file: File) {
+    if (!authUser) return;
     try {
-      const project = await importProjectFromFile(file);
-      setSavedProjects(listProjects());
+      const project = await importProjectFromFile(file, authUser);
+      await refreshSavedProjects(authUser);
       // Open the imported project immediately
       setCurrentProjectId(project.id);
       setUrl(project.url);
-      adoptModel(project.model);
+      adoptModel(cloneBlogModel(project.model));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError("Import fallito: " + msg);
@@ -374,7 +462,7 @@ export default function App() {
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
-    setSavedProjects(listProjects());
+    void refreshSavedProjects();
   }
 
   function enterPreviewEdit() {
@@ -623,7 +711,7 @@ export default function App() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
             <Newspaper size={16} className="text-ink-950" />
           </div>
-          <span className="hidden sm:inline text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+          <span className="hidden sm:inline text-sm tracking-tight">AI Socratic · Blog Maker</span>
           <span className="sm:hidden text-sm tracking-tight">Blog Maker</span>
         </button>
 
@@ -667,7 +755,7 @@ export default function App() {
           {lastSavedAt && model && (
             <span
               className="text-[11px] text-ink-300 flex items-center gap-1.5 mr-1"
-              title={`Auto-salvato in localStorage · ${new Date(lastSavedAt).toLocaleString()}`}
+              title={`Auto-salvato in IndexedDB · ${new Date(lastSavedAt).toLocaleString()}`}
             >
               <SaveIcon size={11} className="text-mint" />
               Salvato {formatRelative(lastSavedAt)}
@@ -924,7 +1012,7 @@ export default function App() {
             {lastSavedAt && (
               <div
                 className="text-[11px] text-ink-300 flex items-center gap-1.5 px-1 pb-1"
-                title={`Auto-salvato in localStorage · ${new Date(lastSavedAt).toLocaleString()}`}
+                title={`Auto-salvato in IndexedDB · ${new Date(lastSavedAt).toLocaleString()}`}
               >
                 <SaveIcon size={11} className="text-mint" />
                 Salvato {formatRelative(lastSavedAt)}
