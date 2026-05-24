@@ -57,6 +57,7 @@ import {
   deleteProject,
   newProjectId,
   formatRelative,
+  normalizeUserId,
   exportProjectToFile,
   importProjectFromFile,
   saveCachedSource,
@@ -398,7 +399,7 @@ export default function App() {
   }
 
   function handleLogin(username: string) {
-    const normalized = username.trim().toLowerCase();
+    const normalized = normalizeUserId(username);
     try {
       localStorage.setItem(AUTH_KEY, normalized);
       localStorage.removeItem(LEGACY_AUTH_KEY);

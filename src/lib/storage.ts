@@ -40,6 +40,10 @@ export function newProjectId(): string {
   return "p_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+export function normalizeUserId(userId: string): string {
+  return userId.trim().toLowerCase();
+}
+
 export function canonicalizeSourceUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return "";
@@ -192,12 +196,8 @@ function waitForTransaction(tx: IDBTransaction): Promise<void> {
   });
 }
 
-function normalizeUserId(userId: string): string {
-  return userId.trim().toLowerCase();
-}
-
 function normalizeProject(project: SavedProject): SavedProject {
-  const sourceUrl = canonicalizeSourceUrl(project.sourceUrl || project.url || project.model.baseHref || "");
+  const sourceUrl = resolveProjectSourceUrl(project);
   const url = sourceUrl || canonicalizeSourceUrl(project.url) || project.url;
   return {
     ...project,
@@ -209,6 +209,14 @@ function normalizeProject(project: SavedProject): SavedProject {
       typeof project.remoteIssueNumber === "number" ? project.remoteIssueNumber : null,
     remoteRevision: typeof project.remoteRevision === "string" ? project.remoteRevision : null,
   };
+}
+
+function resolveProjectSourceUrl(project: {
+  sourceUrl?: string;
+  url?: string;
+  model: Pick<BlogModel, "baseHref">;
+}): string {
+  return canonicalizeSourceUrl(project.sourceUrl || project.url || project.model.baseHref || "");
 }
 
 function isSavedProject(value: unknown): value is SavedProject {
@@ -238,9 +246,11 @@ async function migrateLegacyLocalStorageProjects(userId: string): Promise<void> 
 
         const suffix = key.slice(LEGACY_PROJECT_PREFIX.length);
         const id = typeof parsed.id === "string" && parsed.id ? parsed.id : newProjectId();
-        const sourceUrl = canonicalizeSourceUrl(
-          parsed.sourceUrl || parsed.url || parsed.model.baseHref || suffix
-        );
+        const sourceUrl = resolveProjectSourceUrl({
+          sourceUrl: parsed.sourceUrl,
+          url: parsed.url || suffix,
+          model: parsed.model,
+        });
         const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now();
         const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : savedAt;
 
@@ -340,7 +350,11 @@ export async function importProjectFromFile(file: File, userId: string): Promise
   }
 
   const now = Date.now();
-  const sourceUrl = canonicalizeSourceUrl(p.sourceUrl || p.url || model.baseHref || "");
+  const sourceUrl = resolveProjectSourceUrl({
+    sourceUrl: p.sourceUrl,
+    url: p.url,
+    model,
+  });
   const project = normalizeProject({
     id: newProjectId(),
     userId,
