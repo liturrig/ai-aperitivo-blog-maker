@@ -9,6 +9,7 @@ import {
   pointerWithin,
   rectIntersection,
   type DragEndEvent,
+  type DragStartEvent,
   type DragOverEvent,
   type CollisionDetection,
 } from "@dnd-kit/core";
@@ -417,7 +418,8 @@ export default function App() {
     return closestCenter(args);
   };
 
-  function handleDragStart() {
+  function handleDragStart(_event: DragStartEvent) {
+    void _event;
     lastOverContainerRef.current = null;
   }
 
@@ -873,7 +875,7 @@ export default function App() {
                            text-xs flex items-center gap-1.5 transition"
                 title="Apri anteprima a schermo intero"
               >
-                <Maximize2 size={12} /> Apri in grande
+                <Maximize2 size={12} /> Schermo intero
               </button>
             </div>
           </div>
