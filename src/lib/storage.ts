@@ -389,7 +389,7 @@ function toStoredProjectRecord(value: unknown): StoredProjectRecord | null {
       syncState: normalizeSyncState({
         // Legacy exports persisted a numeric GitHub issue number; the repository now
         // exposes a provider-agnostic string remoteId so other backends can reuse it.
-        remoteId: convertLegacyRemoteId(legacy.remoteIssueNumber),
+        remoteId: convertIssueNumberToRemoteId(legacy.remoteIssueNumber),
         revision: typeof legacy.remoteRevision === "string" ? legacy.remoteRevision : null,
       }),
     };
@@ -417,7 +417,7 @@ function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapsho
         candidate.sync || {
           // Legacy exports persisted a numeric GitHub issue number; the repository now
           // exposes a provider-agnostic string remoteId so other backends can reuse it.
-          remoteId: convertLegacyRemoteId(candidate.remoteIssueNumber),
+          remoteId: convertIssueNumberToRemoteId(candidate.remoteIssueNumber),
           revision: typeof candidate.remoteRevision === "string" ? candidate.remoteRevision : null,
         }
     ),
@@ -456,7 +456,7 @@ function isProjectDocument(value: unknown): value is ProjectDocument {
   );
 }
 
-function convertLegacyRemoteId(issueNumber: unknown): string | null {
+function convertIssueNumberToRemoteId(issueNumber: unknown): string | null {
   return typeof issueNumber === "number" ? String(issueNumber) : null;
 }
 

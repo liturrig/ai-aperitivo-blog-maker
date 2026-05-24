@@ -126,15 +126,15 @@ export default function App() {
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
 
-  function buildProjectDocument(now = Date.now()): ProjectDocument | null {
+  function buildProjectDocument(savedAt = Date.now()): ProjectDocument | null {
     if (!model || !currentProjectId) return null;
     const existing = savedProjects.find((p) => p.id === currentProjectId);
     return {
       id: currentProjectId,
       sourceUrl: canonicalizeSourceUrl(model.baseHref),
       title: model.header?.title || model.baseHref,
-      createdAt: existing?.createdAt ?? now,
-      savedAt: now,
+      createdAt: existing?.createdAt ?? savedAt,
+      savedAt,
       model,
     };
   }
