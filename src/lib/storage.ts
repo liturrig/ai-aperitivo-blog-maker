@@ -7,19 +7,25 @@ const PROJECTS_BY_USER_INDEX = "by-userId";
 const SOURCES_STORE = "source-cache";
 
 const LEGACY_PROJECT_PREFIX = "aperitivo:project:";
-const FILE_FORMAT = "aisocratic-project-v2";
+const FILE_FORMAT = "aisocratic-project-v3";
 
-export type SavedProject = {
+export type ProjectDocument = {
   id: string;
-  userId: string;
-  url: string;
   sourceUrl: string;
   title: string;
   createdAt: number;
   savedAt: number;
   model: BlogModel;
-  remoteIssueNumber?: number | null;
-  remoteRevision?: string | null;
+};
+
+export type ProjectSyncState = {
+  remoteId?: string | null;
+  revision?: string | null;
+};
+
+export type ProjectSnapshot = {
+  project: ProjectDocument;
+  syncState?: ProjectSyncState | null;
 };
 
 export type CachedSource = {
@@ -29,12 +35,202 @@ export type CachedSource = {
   fetchedAt: number;
 };
 
-type LegacyProjectShape = Partial<SavedProject> & {
-  model?: BlogModel;
-  savedAt?: number;
+export interface ProjectRepository {
+  listProjects(userId: string): Promise<ProjectDocument[]>;
+  loadProject(userId: string, id: string): Promise<ProjectDocument | null>;
+  loadProjectSnapshot(userId: string, id: string): Promise<ProjectSnapshot | null>;
+  saveProject(userId: string, project: ProjectDocument, syncState?: ProjectSyncState | null): Promise<boolean>;
+  saveProjectSnapshot(userId: string, snapshot: ProjectSnapshot): Promise<boolean>;
+  deleteProject(userId: string, id: string): Promise<void>;
+  importProjectFromFile(file: File, userId: string): Promise<ProjectSnapshot>;
+  exportProjectToFile(snapshot: ProjectSnapshot): void;
+}
+
+export interface SourceCacheRepository {
+  loadCachedSource(url: string): Promise<CachedSource | null>;
+  saveCachedSource(source: CachedSource): Promise<boolean>;
+}
+
+type LegacyProjectShape = Partial<ProjectDocument> &
+  Partial<{
+    url: string;
+    sourceUrl: string;
+    remoteIssueNumber: number | null;
+    remoteRevision: string | null;
+    sync: ProjectSyncState | null;
+    project: ProjectDocument;
+    syncState: ProjectSyncState | null;
+  }> & {
+    model?: BlogModel;
+    savedAt?: number;
+  };
+
+type StoredProjectRecord = {
+  id: string;
+  userId: string;
+  project: ProjectDocument;
+  syncState?: ProjectSyncState | null;
 };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+export const projectRepository: ProjectRepository = {
+  async listProjects(userId) {
+    const normalizedUserId = normalizeUserId(userId);
+    if (!normalizedUserId) return [];
+
+    await migrateLegacyLocalStorageProjects(normalizedUserId);
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(PROJECTS_STORE, "readonly");
+      const raw = await requestAsPromise<unknown[]>(
+        tx.objectStore(PROJECTS_STORE).index(PROJECTS_BY_USER_INDEX).getAll(normalizedUserId)
+      );
+      await waitForTransaction(tx);
+      return raw
+        .map((value) => toStoredProjectRecord(value))
+        .filter((record): record is StoredProjectRecord => record !== null)
+        .map((record) => record.project)
+        .sort((a, b) => b.savedAt - a.savedAt);
+    } catch {
+      return [];
+    }
+  },
+
+  async loadProject(userId, id) {
+    const snapshot = await this.loadProjectSnapshot(userId, id);
+    return snapshot?.project ?? null;
+  },
+
+  async loadProjectSnapshot(userId, id) {
+    const normalizedUserId = normalizeUserId(userId);
+    if (!normalizedUserId) return null;
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(PROJECTS_STORE, "readonly");
+      const raw = await requestAsPromise<unknown>(tx.objectStore(PROJECTS_STORE).get(id));
+      await waitForTransaction(tx);
+      const record = toStoredProjectRecord(raw);
+      if (!record || record.userId !== normalizedUserId) return null;
+      return { project: record.project, syncState: record.syncState ?? null };
+    } catch {
+      return null;
+    }
+  },
+
+  async saveProject(userId, project, syncState) {
+    return this.saveProjectSnapshot(userId, { project, syncState });
+  },
+
+  async saveProjectSnapshot(userId, snapshot) {
+    const normalizedUserId = normalizeUserId(userId);
+    if (!normalizedUserId) return false;
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(PROJECTS_STORE, "readwrite");
+      tx.objectStore(PROJECTS_STORE).put(
+        toStoredProjectRecordValue(normalizedUserId, snapshot.project, snapshot.syncState)
+      );
+      await waitForTransaction(tx);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async deleteProject(userId, id) {
+    const existing = await this.loadProjectSnapshot(userId, id);
+    if (!existing) return;
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(PROJECTS_STORE, "readwrite");
+      tx.objectStore(PROJECTS_STORE).delete(id);
+      await waitForTransaction(tx);
+    } catch {
+      /* noop */
+    }
+  },
+
+  async importProjectFromFile(file, userId) {
+    const text = await file.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("File non è JSON valido.");
+    }
+
+    const snapshot = parseImportedProject(parsed, file.name);
+    const project: ProjectDocument = {
+      ...snapshot.project,
+      id: newProjectId(),
+      savedAt: Date.now(),
+    };
+    const normalizedSnapshot = { project: normalizeProject(project), syncState: normalizeSyncState(snapshot.syncState) };
+
+    if (!(await this.saveProjectSnapshot(userId, normalizedSnapshot))) {
+      throw new Error("Impossibile salvare nel database del browser (IndexedDB).");
+    }
+
+    return normalizedSnapshot;
+  },
+
+  exportProjectToFile(snapshot) {
+    const payload = {
+      _format: FILE_FORMAT,
+      project: normalizeProject(snapshot.project),
+      syncState: normalizeSyncState(snapshot.syncState),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aisocratic-${slugify(snapshot.project.title)}-${ymd(snapshot.project.savedAt)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+};
+
+export const sourceCacheRepository: SourceCacheRepository = {
+  async loadCachedSource(url) {
+    const sourceUrl = canonicalizeSourceUrl(url);
+    if (!sourceUrl) return null;
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(SOURCES_STORE, "readonly");
+      const raw = await requestAsPromise<unknown>(tx.objectStore(SOURCES_STORE).get(sourceUrl));
+      await waitForTransaction(tx);
+      return isCachedSource(raw) ? { ...raw, sourceUrl } : null;
+    } catch {
+      return null;
+    }
+  },
+
+  async saveCachedSource(source) {
+    const normalized: CachedSource = {
+      ...source,
+      sourceUrl: canonicalizeSourceUrl(source.sourceUrl),
+    };
+    if (!normalized.sourceUrl) return false;
+
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(SOURCES_STORE, "readwrite");
+      tx.objectStore(SOURCES_STORE).put(normalized);
+      await waitForTransaction(tx);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
 
 export function newProjectId(): string {
   return "p_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -62,96 +258,6 @@ export function canonicalizeSourceUrl(url: string): string {
     return parsed.href;
   } catch {
     return trimmed;
-  }
-}
-
-export async function saveProject(project: SavedProject): Promise<boolean> {
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(PROJECTS_STORE, "readwrite");
-    tx.objectStore(PROJECTS_STORE).put(normalizeProject(project));
-    await waitForTransaction(tx);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function loadProject(id: string): Promise<SavedProject | null> {
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(PROJECTS_STORE, "readonly");
-    const raw = await requestAsPromise<unknown>(tx.objectStore(PROJECTS_STORE).get(id));
-    await waitForTransaction(tx);
-    return isSavedProject(raw) ? normalizeProject(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function deleteProject(id: string): Promise<void> {
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(PROJECTS_STORE, "readwrite");
-    tx.objectStore(PROJECTS_STORE).delete(id);
-    await waitForTransaction(tx);
-  } catch {
-    /* noop */
-  }
-}
-
-export async function listProjects(userId: string): Promise<SavedProject[]> {
-  const normalizedUserId = normalizeUserId(userId);
-  if (!normalizedUserId) return [];
-
-  await migrateLegacyLocalStorageProjects(normalizedUserId);
-
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(PROJECTS_STORE, "readonly");
-    const raw = await requestAsPromise<unknown[]>(
-      tx.objectStore(PROJECTS_STORE).index(PROJECTS_BY_USER_INDEX).getAll(normalizedUserId)
-    );
-    await waitForTransaction(tx);
-    return raw
-      .filter(isSavedProject)
-      .map((project) => normalizeProject(project))
-      .sort((a, b) => b.savedAt - a.savedAt);
-  } catch {
-    return [];
-  }
-}
-
-export async function loadCachedSource(url: string): Promise<CachedSource | null> {
-  const sourceUrl = canonicalizeSourceUrl(url);
-  if (!sourceUrl) return null;
-
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(SOURCES_STORE, "readonly");
-    const raw = await requestAsPromise<unknown>(tx.objectStore(SOURCES_STORE).get(sourceUrl));
-    await waitForTransaction(tx);
-    return isCachedSource(raw) ? { ...raw, sourceUrl } : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveCachedSource(source: CachedSource): Promise<boolean> {
-  const normalized: CachedSource = {
-    ...source,
-    sourceUrl: canonicalizeSourceUrl(source.sourceUrl),
-  };
-  if (!normalized.sourceUrl) return false;
-
-  try {
-    const db = await openDatabase();
-    const tx = db.transaction(SOURCES_STORE, "readwrite");
-    tx.objectStore(SOURCES_STORE).put(normalized);
-    await waitForTransaction(tx);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -196,18 +302,12 @@ function waitForTransaction(tx: IDBTransaction): Promise<void> {
   });
 }
 
-function normalizeProject(project: SavedProject): SavedProject {
+function normalizeProject(project: ProjectDocument): ProjectDocument {
   const sourceUrl = resolveProjectSourceUrl(project);
-  const url = sourceUrl || canonicalizeSourceUrl(project.url) || project.url;
   return {
     ...project,
-    userId: normalizeUserId(project.userId),
-    url,
-    sourceUrl: sourceUrl || url,
-    title: project.title || project.model.header?.title || url,
-    remoteIssueNumber:
-      typeof project.remoteIssueNumber === "number" ? project.remoteIssueNumber : null,
-    remoteRevision: typeof project.remoteRevision === "string" ? project.remoteRevision : null,
+    sourceUrl,
+    title: project.title || project.model.header?.title || sourceUrl,
   };
 }
 
@@ -219,8 +319,133 @@ function resolveProjectSourceUrl(project: {
   return canonicalizeSourceUrl(project.sourceUrl || project.url || project.model.baseHref || "");
 }
 
-function isSavedProject(value: unknown): value is SavedProject {
-  return !!value && typeof value === "object" && "id" in value && "model" in value && "userId" in value;
+function normalizeSyncState(syncState?: ProjectSyncState | null): ProjectSyncState | null {
+  if (!syncState) return null;
+  return {
+    remoteId: typeof syncState.remoteId === "string" ? syncState.remoteId : null,
+    revision: typeof syncState.revision === "string" ? syncState.revision : null,
+  };
+}
+
+function toStoredProjectRecordValue(
+  userId: string,
+  project: ProjectDocument,
+  syncState?: ProjectSyncState | null
+): StoredProjectRecord {
+  const normalizedProject = normalizeProject(project);
+  return {
+    id: normalizedProject.id,
+    userId,
+    project: normalizedProject,
+    syncState: normalizeSyncState(syncState),
+  };
+}
+
+function toStoredProjectRecord(value: unknown): StoredProjectRecord | null {
+  if (!value || typeof value !== "object") return null;
+
+  if ("project" in value && "userId" in value) {
+    const candidate = value as {
+      id?: unknown;
+      userId?: unknown;
+      project?: unknown;
+      syncState?: unknown;
+    };
+    if (typeof candidate.userId !== "string" || !isProjectDocument(candidate.project)) return null;
+    return {
+      id: candidate.project.id,
+      userId: normalizeUserId(candidate.userId),
+      project: normalizeProject(candidate.project),
+      syncState: normalizeSyncState(candidate.syncState as ProjectSyncState | null | undefined),
+    };
+  }
+
+  if ("model" in value && "userId" in value) {
+    const legacy = value as LegacyProjectShape & { id?: unknown; userId?: unknown };
+    if (typeof legacy.userId !== "string" || !legacy.model || !Array.isArray(legacy.model.macros)) return null;
+    const resolvedSourceUrl = resolveProjectSourceUrl({
+      sourceUrl: legacy.sourceUrl,
+      url: legacy.url,
+      model: legacy.model,
+    });
+    const project = normalizeProject({
+      id: typeof legacy.id === "string" ? legacy.id : newProjectId(),
+      sourceUrl: resolvedSourceUrl,
+      title: legacy.title || legacy.model.header?.title || resolvedSourceUrl,
+      createdAt: typeof legacy.createdAt === "number" ? legacy.createdAt : Date.now(),
+      savedAt: typeof legacy.savedAt === "number" ? legacy.savedAt : Date.now(),
+      model: legacy.model,
+    });
+    return {
+      id: project.id,
+      userId: normalizeUserId(legacy.userId),
+      project,
+      syncState: normalizeSyncState({
+        remoteId:
+          typeof legacy.remoteIssueNumber === "number" ? String(legacy.remoteIssueNumber) : null,
+        revision: legacy.remoteRevision,
+      }),
+    };
+  }
+
+  return null;
+}
+
+function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapshot {
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("File non riconosciuto: formato progetto mancante.");
+  }
+
+  const candidate = parsed as LegacyProjectShape;
+  const importedProject = isProjectDocument(candidate.project) ? candidate.project : extractLegacyProject(candidate, fileName);
+  const normalizedProject = normalizeProject({
+    ...importedProject,
+    id: importedProject.id || newProjectId(),
+  });
+
+  return {
+    project: normalizedProject,
+    syncState: normalizeSyncState(
+      candidate.syncState ||
+        candidate.sync || {
+          remoteId:
+            typeof candidate.remoteIssueNumber === "number" ? String(candidate.remoteIssueNumber) : null,
+          revision: candidate.remoteRevision,
+        }
+    ),
+  };
+}
+
+function extractLegacyProject(candidate: LegacyProjectShape, fileName: string): ProjectDocument {
+  const model = candidate.model;
+  if (!model || !Array.isArray(model.macros)) {
+    throw new Error("File non valido: 'model.macros' assente o non un array.");
+  }
+
+  const now = Date.now();
+  const sourceUrl = resolveProjectSourceUrl({
+    sourceUrl: candidate.sourceUrl,
+    url: candidate.url,
+    model,
+  });
+  return {
+    id: typeof candidate.id === "string" ? candidate.id : newProjectId(),
+    sourceUrl,
+    title: candidate.title || model.header?.title || fileName.replace(/\.json$/i, ""),
+    createdAt: typeof candidate.createdAt === "number" ? candidate.createdAt : now,
+    savedAt: typeof candidate.savedAt === "number" ? candidate.savedAt : now,
+    model,
+  };
+}
+
+function isProjectDocument(value: unknown): value is ProjectDocument {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "id" in value &&
+    "model" in value &&
+    "sourceUrl" in value
+  );
 }
 
 function isCachedSource(value: unknown): value is CachedSource {
@@ -230,7 +455,7 @@ function isCachedSource(value: unknown): value is CachedSource {
 async function migrateLegacyLocalStorageProjects(userId: string): Promise<void> {
   if (typeof localStorage === "undefined") return;
 
-  const entries: Array<{ key: string; project: SavedProject }> = [];
+  const entries: Array<{ key: string; snapshot: ProjectSnapshot }> = [];
 
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -242,35 +467,8 @@ async function migrateLegacyLocalStorageProjects(userId: string): Promise<void> 
 
       try {
         const parsed = JSON.parse(raw) as LegacyProjectShape;
-        if (!parsed.model || !Array.isArray(parsed.model.macros)) continue;
-
-        const suffix = key.slice(LEGACY_PROJECT_PREFIX.length);
-        const id = typeof parsed.id === "string" && parsed.id ? parsed.id : newProjectId();
-        const sourceUrl = resolveProjectSourceUrl({
-          sourceUrl: parsed.sourceUrl,
-          url: parsed.url || suffix,
-          model: parsed.model,
-        });
-        const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now();
-        const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : savedAt;
-
-        entries.push({
-          key,
-          project: normalizeProject({
-            id,
-            userId,
-            url: sourceUrl,
-            sourceUrl,
-            title: parsed.title || parsed.model.header?.title || sourceUrl,
-            createdAt,
-            savedAt,
-            model: parsed.model,
-            remoteIssueNumber:
-              typeof parsed.remoteIssueNumber === "number" ? parsed.remoteIssueNumber : null,
-            remoteRevision:
-              typeof parsed.remoteRevision === "string" ? parsed.remoteRevision : null,
-          }),
-        });
+        const snapshot = parseImportedProject(parsed, key.slice(LEGACY_PROJECT_PREFIX.length));
+        entries.push({ key, snapshot });
       } catch {
         /* skip malformed */
       }
@@ -283,7 +481,7 @@ async function migrateLegacyLocalStorageProjects(userId: string): Promise<void> 
 
   const migratedKeys: string[] = [];
   for (const entry of entries) {
-    if (await saveProject(entry.project)) {
+    if (await projectRepository.saveProjectSnapshot(userId, entry.snapshot)) {
       migratedKeys.push(entry.key);
     }
   }
@@ -311,68 +509,6 @@ function ymd(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-}
-
-export function exportProjectToFile(project: SavedProject): void {
-  const payload = { _format: FILE_FORMAT, ...project };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `aisocratic-${slugify(project.title)}-${ymd(project.savedAt)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export async function importProjectFromFile(file: File, userId: string): Promise<SavedProject> {
-  const text = await file.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("File non è JSON valido.");
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    !("model" in parsed) ||
-    typeof (parsed as { model: unknown }).model !== "object"
-  ) {
-    throw new Error("File non riconosciuto: manca il campo 'model'.");
-  }
-
-  const p = parsed as LegacyProjectShape & { _format?: string };
-  const model = p.model as BlogModel | undefined;
-  if (!model || !Array.isArray(model.macros)) {
-    throw new Error("File non valido: 'model.macros' assente o non un array.");
-  }
-
-  const now = Date.now();
-  const sourceUrl = resolveProjectSourceUrl({
-    sourceUrl: p.sourceUrl,
-    url: p.url,
-    model,
-  });
-  const project = normalizeProject({
-    id: newProjectId(),
-    userId,
-    url: sourceUrl,
-    sourceUrl,
-    title: p.title || model.header?.title || file.name.replace(/\.json$/, ""),
-    createdAt: typeof p.createdAt === "number" ? p.createdAt : now,
-    savedAt: now,
-    model,
-    remoteIssueNumber: typeof p.remoteIssueNumber === "number" ? p.remoteIssueNumber : null,
-    remoteRevision: typeof p.remoteRevision === "string" ? p.remoteRevision : null,
-  });
-
-  if (!(await saveProject(project))) {
-    throw new Error("Impossibile salvare nel database del browser (IndexedDB).");
-  }
-
-  return project;
 }
 
 export function formatRelative(ts: number): string {

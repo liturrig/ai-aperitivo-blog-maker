@@ -51,17 +51,13 @@ import {
 } from "./lib/parser";
 import {
   canonicalizeSourceUrl,
-  loadCachedSource,
-  saveProject,
-  listProjects,
-  deleteProject,
-  newProjectId,
   formatRelative,
   normalizeUserId,
-  exportProjectToFile,
-  importProjectFromFile,
-  saveCachedSource,
-  type SavedProject,
+  newProjectId,
+  projectRepository,
+  sourceCacheRepository,
+  type ProjectDocument,
+  type ProjectSnapshot,
 } from "./lib/storage";
 
 const AUTH_KEY = "aisocratic:auth";
@@ -109,7 +105,7 @@ export default function App() {
   >(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
-  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [savedProjects, setSavedProjects] = useState<ProjectDocument[]>([]);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
@@ -130,24 +126,37 @@ export default function App() {
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
 
+  function buildProjectDocument(now = Date.now()): ProjectDocument | null {
+    if (!model || !currentProjectId) return null;
+    const existing = savedProjects.find((p) => p.id === currentProjectId);
+    return {
+      id: currentProjectId,
+      sourceUrl: canonicalizeSourceUrl(model.baseHref),
+      title: model.header?.title || model.baseHref,
+      createdAt: existing?.createdAt ?? now,
+      savedAt: now,
+      model,
+    };
+  }
+
   async function refreshSavedProjects(userId = authUser) {
     if (!userId) {
       setSavedProjects([]);
       return;
     }
-    setSavedProjects(await listProjects(userId));
+    setSavedProjects(await projectRepository.listProjects(userId));
   }
 
   async function resolveSourceModel(rawUrl: string): Promise<{ sourceUrl: string; model: BlogModel }> {
     const sourceUrl = canonicalizeSourceUrl(rawUrl);
-    const cached = await loadCachedSource(sourceUrl);
+    const cached = await sourceCacheRepository.loadCachedSource(sourceUrl);
     if (cached?.model) {
       return { sourceUrl, model: cloneBlogModel(cached.model) };
     }
 
     const html = await fetchHTML(sourceUrl, proxy);
     const parsed = parseBlog(html, sourceUrl);
-    await saveCachedSource({
+    await sourceCacheRepository.saveCachedSource({
       sourceUrl,
       html,
       model: parsed,
@@ -161,7 +170,7 @@ export default function App() {
     if (!authUser) return;
 
     void (async () => {
-      const projects = await listProjects(authUser);
+      const projects = await projectRepository.listProjects(authUser);
       if (!cancelled) setSavedProjects(projects);
     })();
 
@@ -259,20 +268,11 @@ export default function App() {
     if (!model || !currentProjectId || !authUser) return;
     if (previewEditMode) return;
     const t = setTimeout(() => {
-      const existing = savedProjects.find((p) => p.id === currentProjectId);
       const now = Date.now();
-      const project: SavedProject = {
-        id: currentProjectId,
-        userId: authUser,
-        url: canonicalizeSourceUrl(model.baseHref),
-        sourceUrl: canonicalizeSourceUrl(model.baseHref),
-        title: model.header?.title || model.baseHref,
-        createdAt: existing?.createdAt ?? now,
-        savedAt: now,
-        model,
-      };
+      const project = buildProjectDocument(now);
+      if (!project) return;
       void (async () => {
-        if (await saveProject(project)) {
+        if (await projectRepository.saveProject(authUser, project)) {
           setLastSavedAt(now);
           await refreshSavedProjects(authUser);
         }
@@ -312,17 +312,15 @@ export default function App() {
       const { sourceUrl, model: parsed } = await resolveSourceModel(rawUrl);
       const id = newProjectId();
       const now = Date.now();
-      const project: SavedProject = {
+      const project: ProjectDocument = {
         id,
-        userId: authUser,
-        url: sourceUrl,
         sourceUrl,
         title: parsed.header?.title || sourceUrl,
         createdAt: now,
         savedAt: now,
         model: parsed,
       };
-      await saveProject(project);
+      await projectRepository.saveProject(authUser, project);
       setCurrentProjectId(id);
       adoptModel(parsed);
       await refreshSavedProjects(authUser);
@@ -342,15 +340,16 @@ export default function App() {
     );
   }
 
-  function resumeProject(p: SavedProject) {
+  function resumeProject(p: ProjectDocument) {
     setCurrentProjectId(p.id);
-    setUrl(p.url);
+    setUrl(p.sourceUrl);
     adoptModel(cloneBlogModel(p.model));
   }
 
-  async function removeSavedProject(p: SavedProject) {
+  async function removeSavedProject(p: ProjectDocument) {
     if (!window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) return;
-    await deleteProject(p.id);
+    if (!authUser) return;
+    await projectRepository.deleteProject(authUser, p.id);
     await refreshSavedProjects();
     if (currentProjectId === p.id) {
       // We just deleted the open project; bounce to dashboard
@@ -379,19 +378,9 @@ export default function App() {
 
   async function saveNow() {
     if (!model || !currentProjectId || !authUser) return;
-    const existing = savedProjects.find((p) => p.id === currentProjectId);
     const now = Date.now();
-    const project: SavedProject = {
-      id: currentProjectId,
-      userId: authUser,
-      url: canonicalizeSourceUrl(model.baseHref),
-      sourceUrl: canonicalizeSourceUrl(model.baseHref),
-      title: model.header?.title || model.baseHref,
-      createdAt: existing?.createdAt ?? now,
-      savedAt: now,
-      model,
-    };
-    if (await saveProject(project)) {
+    const project = buildProjectDocument(now);
+    if (project && (await projectRepository.saveProject(authUser, project))) {
       setLastSavedAt(now);
       await refreshSavedProjects(authUser);
       setJustSaved(true);
@@ -425,29 +414,21 @@ export default function App() {
 
   function exportCurrent() {
     if (!model || !currentProjectId || !authUser) return;
-    const existing = savedProjects.find((p) => p.id === currentProjectId);
-    const now = Date.now();
-    const project: SavedProject = {
-      id: currentProjectId,
-      userId: authUser,
-      url: canonicalizeSourceUrl(model.baseHref),
-      sourceUrl: canonicalizeSourceUrl(model.baseHref),
-      title: model.header?.title || model.baseHref,
-      createdAt: existing?.createdAt ?? now,
-      savedAt: existing?.savedAt ?? now,
-      model,
-    };
-    exportProjectToFile(project);
+    const project = buildProjectDocument(savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? Date.now());
+    if (!project) return;
+    const snapshot: ProjectSnapshot = { project };
+    projectRepository.exportProjectToFile(snapshot);
   }
 
   async function importFromFile(file: File) {
     if (!authUser) return;
     try {
-      const project = await importProjectFromFile(file, authUser);
+      const snapshot = await projectRepository.importProjectFromFile(file, authUser);
+      const project = snapshot.project;
       await refreshSavedProjects(authUser);
       // Open the imported project immediately
       setCurrentProjectId(project.id);
-      setUrl(project.url);
+      setUrl(project.sourceUrl);
       adoptModel(cloneBlogModel(project.model));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

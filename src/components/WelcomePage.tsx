@@ -10,16 +10,16 @@ import {
   Plus,
   Upload,
 } from "lucide-react";
-import { formatRelative, type SavedProject } from "../lib/storage";
+import { formatRelative, type ProjectDocument } from "../lib/storage";
 
 type Props = {
   username: string;
-  savedProjects: SavedProject[];
+  savedProjects: ProjectDocument[];
   loading: boolean;
   initialURL: string;
   onLoadURL: (url: string) => void;
-  onResume: (project: SavedProject) => void;
-  onDelete: (project: SavedProject) => void;
+  onResume: (project: ProjectDocument) => void;
+  onDelete: (project: ProjectDocument) => void;
   onImport: (file: File) => void;
   onLogout: () => void;
 };
@@ -212,7 +212,7 @@ export function WelcomePage({
                         <div className="text-[11px] text-ink-300 truncate flex items-center gap-2">
                           <span>{formatRelative(p.savedAt)}</span>
                           <span className="opacity-60">·</span>
-                          <code className="text-brand-400 truncate">{p.url}</code>
+                          <code className="text-brand-400 truncate">{p.sourceUrl}</code>
                         </div>
                       </div>
                       <button
