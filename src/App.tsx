@@ -157,10 +157,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!authUser) {
-      setSavedProjects([]);
-      return;
-    }
+    if (!authUser) return;
 
     void (async () => {
       const projects = await listProjects(authUser);
