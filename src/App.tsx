@@ -76,6 +76,7 @@ export default function App() {
   const [initialMacroOrder, setInitialMacroOrder] = useState<string>("");
   const [previewURL, setPreviewURL] = useState<string>("");
   const [fullscreen, setFullscreen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [previewEditMode, setPreviewEditMode] = useState(false);
   const [editing, setEditing] = useState<
     | { kind: "item"; macroId: string; itemId: string }
@@ -220,13 +221,17 @@ export default function App() {
     return () => clearTimeout(t);
   }, [justSaved]);
 
-  // ESC closes fullscreen
+  // ESC closes fullscreen and mobile actions
   useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFullscreen(false);
+    if (!fullscreen && !mobileActionsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setFullscreen(false);
+      setMobileActionsOpen(false);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+  }, [fullscreen, mobileActionsOpen]);
 
   /** Fetch a URL fresh and start a NEW project (independent id, even if URL is reused). */
   async function startNewProject(rawUrl: string) {
@@ -365,6 +370,7 @@ export default function App() {
   }
 
   function backToWelcome() {
+    setMobileActionsOpen(false);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
@@ -412,7 +418,8 @@ export default function App() {
     return closestCenter(args);
   };
 
-  function handleDragStart(_e: DragStartEvent) {
+  function handleDragStart(_event: DragStartEvent) {
+    void _event;
     lastOverContainerRef.current = null;
   }
 
@@ -607,7 +614,7 @@ export default function App() {
 
   return (
     <div className="h-full flex flex-col bg-ink-900 text-ink-100">
-      <header className="px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex items-center gap-4 sticky top-0 z-10">
+      <header className="px-4 sm:px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex flex-wrap items-center gap-3 sticky top-0 z-20">
         <button
           onClick={backToWelcome}
           className="flex items-center gap-2 font-semibold hover:opacity-80 transition"
@@ -616,18 +623,39 @@ export default function App() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
             <Newspaper size={16} className="text-ink-950" />
           </div>
-          <span className="text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+          <span className="hidden sm:inline text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+          <span className="sm:hidden text-sm tracking-tight">Blog Maker</span>
         </button>
 
-        <div className="flex-1 flex items-center gap-2 min-w-0">
+        <div className="order-3 w-full min-w-0 lg:order-none lg:w-auto lg:flex-1 flex items-center gap-2">
           <span className="text-xs text-ink-300 truncate">
             <span className="text-ink-100 font-medium">{model.header?.title || "(senza titolo)"}</span>
             <span className="opacity-60 mx-2">·</span>
-            <code className="text-brand-400">{model.baseHref}</code>
+            <code className="text-brand-400 truncate">{model.baseHref}</code>
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 lg:hidden">
+          <button
+            onClick={() => setFullscreen(true)}
+            disabled={!previewURL}
+            className="w-10 h-10 rounded-lg border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition"
+            title="Apri anteprima a schermo intero"
+            aria-label="Apri anteprima a schermo intero"
+          >
+            <Maximize2 size={16} />
+          </button>
+          <button
+            onClick={() => setMobileActionsOpen(true)}
+            className="w-10 h-10 rounded-lg border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 flex items-center justify-center text-lg leading-none transition"
+            title="Apri azioni progetto"
+            aria-label="Apri azioni progetto"
+          >
+            ⋯
+          </button>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-2">
           <button
             onClick={backToWelcome}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand
@@ -696,9 +724,9 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] overflow-hidden">
+      <main className="flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:overflow-hidden">
         {/* LEFT: editor */}
-        <section className="overflow-y-auto scroll-thin border-r border-ink-600 p-6">
+        <section className="scroll-thin p-4 sm:p-6 lg:overflow-y-auto lg:border-r lg:border-ink-600">
           {error && (
             <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
               {error}
@@ -799,12 +827,12 @@ export default function App() {
         </section>
 
         {/* RIGHT: live preview */}
-        <section className="overflow-hidden p-6 flex flex-col min-w-0">
-          <div className="flex items-center justify-between mb-3">
+        <section className="border-t border-ink-600 p-4 sm:p-6 flex flex-col min-w-0 min-h-[65vh] lg:min-h-0 lg:border-t-0 lg:overflow-hidden">
+          <div className="flex flex-col gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-[11px] uppercase tracking-widest font-bold text-ink-300">
               Anteprima live
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {hasChanges && (
                 <span className="text-[10px] uppercase tracking-widest font-bold text-mint bg-mint/10 px-2 py-1 rounded">
                   Modificato
@@ -847,11 +875,11 @@ export default function App() {
                            text-xs flex items-center gap-1.5 transition"
                 title="Apri anteprima a schermo intero"
               >
-                <Maximize2 size={12} /> Fullscreen
+                <Maximize2 size={12} /> Schermo intero
               </button>
             </div>
           </div>
-          <div className="flex-1 rounded-xl border border-ink-600 overflow-hidden bg-[#0c0d11]">
+          <div className="flex-1 min-h-[50vh] rounded-xl border border-ink-600 overflow-hidden bg-[#0c0d11] lg:min-h-0">
             {previewURL ? (
               <iframe
                 src={previewURL}
@@ -867,6 +895,105 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {mobileActionsOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink-950/80 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileActionsOpen(false)}
+        >
+          <div
+            className="absolute inset-x-4 top-16 rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl p-4 flex flex-col gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-ink-100 truncate">
+                  {model.header?.title || "(senza titolo)"}
+                </div>
+                <div className="text-[11px] text-ink-300 truncate capitalize">{authUser}</div>
+              </div>
+              <button
+                onClick={() => setMobileActionsOpen(false)}
+                className="w-9 h-9 rounded-lg border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center"
+                aria-label="Chiudi azioni progetto"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {lastSavedAt && (
+              <div
+                className="text-[11px] text-ink-300 flex items-center gap-1.5 px-1 pb-1"
+                title={`Auto-salvato in localStorage · ${new Date(lastSavedAt).toLocaleString()}`}
+              >
+                <SaveIcon size={11} className="text-mint" />
+                Salvato {formatRelative(lastSavedAt)}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                setMobileActionsOpen(false);
+                backToWelcome();
+              }}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition"
+            >
+              <History size={14} /> Progetti
+            </button>
+            <button
+              onClick={() => {
+                saveNow();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model}
+              className={`w-full px-3 py-3 rounded-xl border text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                justSaved
+                  ? "bg-mint border-mint text-ink-950 font-semibold"
+                  : "border-ink-600 hover:border-mint hover:text-mint"
+              }`}
+            >
+              {justSaved ? (
+                <>
+                  <Check size={14} /> Salvato!
+                </>
+              ) : (
+                <>
+                  <SaveIcon size={13} /> Salva
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                resetOrder();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!hasChanges}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-ink-500 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <RotateCcw size={13} /> Reset
+            </button>
+            <button
+              onClick={() => {
+                exportCurrent();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model}
+              className="w-full px-3 py-3 rounded-xl bg-mint hover:brightness-110 text-ink-950 text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <FileJson size={14} /> Esporta JSON
+            </button>
+            <button
+              onClick={() => {
+                handleLogout();
+                setMobileActionsOpen(false);
+              }}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-red-500 hover:text-red-400 text-sm flex items-center gap-2 transition"
+            >
+              <LogOut size={13} /> Logout
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Editor modal (news or macro-sezione) */}
       {editingTarget && (
