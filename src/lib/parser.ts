@@ -678,7 +678,7 @@ ${editMode ? '<div class="edit-banner">✏️ Modalità modifica attiva · clicc
     }
     function readTitleText(el) {
       // Strip leading '#' that comes from hidden permalink anchors like <a aria-hidden>#</a>
-      return el.textContent.replace(/^#+\s*/, '').trim();
+      return el.textContent.replace(/^#+/, '').trim();
     }
     // Remove permalink anchors from all headings (they only add visual "#" prefix)
     document.querySelectorAll('h1 a[aria-hidden], h2 a[aria-hidden], h3 a[aria-hidden]').forEach(function (a) { a.remove(); });
