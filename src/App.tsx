@@ -270,7 +270,10 @@ export default function App() {
     const t = setTimeout(() => {
       const now = Date.now();
       const project = buildProjectDocument(now);
-      if (!project) return;
+      if (!project) {
+        setError("Impossibile salvare il progetto corrente.");
+        return;
+      }
       void (async () => {
         if (await projectRepository.saveProject(authUser, project)) {
           setLastSavedAt(now);

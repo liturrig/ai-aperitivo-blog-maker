@@ -68,6 +68,7 @@ type LegacyProjectShape = Partial<ProjectDocument> &
   };
 
 type StoredProjectRecord = {
+  // IndexedDB keyPath lives at the record root, so we mirror `project.id` here.
   id: string;
   userId: string;
   project: ProjectDocument;
@@ -172,7 +173,10 @@ export const projectRepository: ProjectRepository = {
       id: newProjectId(),
       savedAt: Date.now(),
     };
-    const normalizedSnapshot = { project: normalizeProject(project), syncState: normalizeSyncState(snapshot.syncState) };
+    const normalizedSnapshot = {
+      project: normalizeProject(project),
+      syncState: normalizeSyncState(snapshot.syncState),
+    };
 
     if (!(await this.saveProjectSnapshot(userId, normalizedSnapshot))) {
       throw new Error("Impossibile salvare nel database del browser (IndexedDB).");
@@ -385,8 +389,7 @@ function toStoredProjectRecord(value: unknown): StoredProjectRecord | null {
       syncState: normalizeSyncState({
         // Legacy exports persisted a numeric GitHub issue number; the repository now
         // exposes a provider-agnostic string remoteId so other backends can reuse it.
-        remoteId:
-          typeof legacy.remoteIssueNumber === "number" ? String(legacy.remoteIssueNumber) : null,
+        remoteId: convertLegacyRemoteId(legacy.remoteIssueNumber),
         revision: typeof legacy.remoteRevision === "string" ? legacy.remoteRevision : null,
       }),
     };
@@ -414,8 +417,7 @@ function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapsho
         candidate.sync || {
           // Legacy exports persisted a numeric GitHub issue number; the repository now
           // exposes a provider-agnostic string remoteId so other backends can reuse it.
-          remoteId:
-            typeof candidate.remoteIssueNumber === "number" ? String(candidate.remoteIssueNumber) : null,
+          remoteId: convertLegacyRemoteId(candidate.remoteIssueNumber),
           revision: typeof candidate.remoteRevision === "string" ? candidate.remoteRevision : null,
         }
     ),
@@ -452,6 +454,10 @@ function isProjectDocument(value: unknown): value is ProjectDocument {
     "model" in value &&
     "sourceUrl" in value
   );
+}
+
+function convertLegacyRemoteId(issueNumber: unknown): string | null {
+  return typeof issueNumber === "number" ? String(issueNumber) : null;
 }
 
 function isCachedSource(value: unknown): value is CachedSource {
