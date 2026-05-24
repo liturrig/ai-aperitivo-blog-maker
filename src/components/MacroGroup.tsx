@@ -43,30 +43,38 @@ export function MacroGroup({
     id: macro.id,
     data: { type: "macro" },
   });
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = sortable;
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `drop-${macro.id}`,
     data: { type: "macroDrop", macroId: macro.id },
   });
 
   const style = {
-    transform: CSS.Transform.toString(sortable.transform),
-    transition: sortable.transition,
-    opacity: sortable.isDragging ? 0.5 : 1,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
   };
 
   const itemIds = macro.items.map((i) => i.id);
 
   return (
     <div
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       style={style}
       className={`rounded-2xl border bg-gradient-to-b from-ink-800 to-ink-900
-        ${sortable.isDragging ? "border-brand ring-2 ring-brand/40" : "border-ink-600"}`}
+        ${isDragging ? "border-brand ring-2 ring-brand/40" : "border-ink-600"}`}
     >
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-ink-600 bg-ink-800 rounded-t-2xl">
         <button
-          {...sortable.attributes}
-          {...sortable.listeners}
+          {...attributes}
+          {...listeners}
           className="text-ink-300 hover:text-ink-100 cursor-grab active:cursor-grabbing touch-none shrink-0"
           aria-label="Trascina macro-sezione"
         >
