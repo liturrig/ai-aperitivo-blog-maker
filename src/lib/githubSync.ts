@@ -2,6 +2,7 @@ import {
   applyProjectOperations,
   canonicalizeSourceUrl,
   cloneProjectDocument,
+  normalizeProjectChangeOperations,
   type ProjectChangeOperation,
   type ProjectDocument,
   type ProjectSnapshot,
@@ -482,7 +483,7 @@ function parseEventComment(body: string): RemoteCommentEvent | null {
       savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now(),
       syncedAt: typeof parsed.syncedAt === "number" ? parsed.syncedAt : Date.now(),
       userId: typeof parsed.userId === "string" ? parsed.userId : "",
-      operations: (parsed.operations as ProjectChangeOperation[]).filter(Boolean),
+      operations: normalizeProjectChangeOperations(parsed.operations) ?? [],
     };
   } catch {
     return null;

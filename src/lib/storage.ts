@@ -503,7 +503,7 @@ function normalizeSeedProject(seedProject: unknown): ProjectDocument | null {
   return isProjectDocument(seedProject) ? normalizeProject(seedProject) : null;
 }
 
-function normalizeProjectChangeOperations(value: unknown): ProjectChangeOperation[] | null {
+export function normalizeProjectChangeOperations(value: unknown): ProjectChangeOperation[] | null {
   if (!Array.isArray(value)) return null;
   const operations = value
     .map((operation) => normalizeProjectChangeOperation(operation))
@@ -689,7 +689,7 @@ function takeNewsItem(project: ProjectDocument, itemId: string): { item: NewsIte
 }
 
 function clampIndex(index: number, length: number): number {
-  return Math.max(0, Math.min(length - 1, Math.trunc(index)));
+  return Math.max(0, Math.min(length, Math.trunc(index)));
 }
 
 function updateDerivedItemFields(item: NewsItem): void {

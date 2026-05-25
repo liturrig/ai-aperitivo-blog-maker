@@ -498,6 +498,7 @@ export default function App() {
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!model || !currentProjectId || !authUser || !remoteReady) return;
     if (previewEditMode || syncBusy !== null) return;
@@ -512,7 +513,6 @@ export default function App() {
     authUser,
     currentProjectId,
     currentSyncState?.pendingOperations,
-    flushRemoteChanges,
     model,
     previewEditMode,
     remoteReady,
@@ -999,7 +999,7 @@ export default function App() {
       macro.items.push(it);
       return next;
     });
-    enqueueOperations([{ type: "add-item", macroId, item: JSON.parse(JSON.stringify(it)) as NewsItem, index }], seedProject);
+    enqueueOperations([{ type: "add-item", macroId, item: it, index }], seedProject);
     // Open the editor immediately so user can add title, body, image, sources
     setEditing({ kind: "item", macroId, itemId: it.id });
   }
@@ -1017,7 +1017,7 @@ export default function App() {
     const seedProject = buildProjectDocument(currentTimestamp());
     const index = model?.macros.length ?? 0;
     setModel((m) => (m ? { ...m, macros: [...m.macros, mac] } : m));
-    enqueueOperations([{ type: "add-macro", macro: JSON.parse(JSON.stringify(mac)) as MacroSection, index }], seedProject);
+    enqueueOperations([{ type: "add-macro", macro: mac, index }], seedProject);
     setEditing({ kind: "macro", macroId: mac.id });
   }
   function resetOrder() {
