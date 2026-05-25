@@ -1,73 +1,55 @@
-# React + TypeScript + Vite
+# AI Socratic Blog Maker
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Browser editor for AI Socratic blog posts built with React, TypeScript, and Vite.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Useful commands:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run lint
+npm run build
 ```
+
+## How saving works
+
+- **IndexedDB** is still the automatic local save layer.
+- Local edits are auto-saved in the browser after a short debounce.
+- **GitHub sync is separate and explicit**: it writes the current snapshot to a GitHub issue only when you click **Sync GitHub**.
+
+## GitHub sync
+
+The app can mirror one project to one GitHub issue:
+
+- the **issue body** stores the canonical shared project snapshot
+- **issue comments** are used only as audit/history entries
+- each sync writes a new **revision**
+- if the remote revision changed, the app blocks overwriting and asks you to **Refresh GitHub** first
+
+### Configure it
+
+From the dashboard or the editor:
+
+1. enter the GitHub **owner**
+2. enter the GitHub **repository**
+3. paste a GitHub token with permission to read/write issues for that repo
+4. optionally change the issue label used for synced projects
+
+The token is stored in **sessionStorage only** so it is cleared when the browser session ends.
+
+### Current workflow
+
+1. Edit normally
+2. Let IndexedDB auto-save locally, or click **Salva**
+3. Click **Sync GitHub** to push the current snapshot
+4. Click **Refresh GitHub** to replace the local project with the remote snapshot
+
+## Notes
+
+- GitHub sync keeps the local IndexedDB model as the source of in-progress edits.
+- Remote sync currently ships as an explicit save/refresh flow; batched remote autosave can be layered on later without making GitHub the live edit log.

@@ -9,8 +9,10 @@ import {
   LogOut,
   Plus,
   Upload,
+  Cloud,
 } from "lucide-react";
 import { formatRelative, type ProjectDocument } from "../lib/storage";
+import type { GitHubSyncSettings } from "../lib/githubSync";
 
 type Props = {
   username: string;
@@ -21,6 +23,9 @@ type Props = {
   onResume: (project: ProjectDocument) => void;
   onDelete: (project: ProjectDocument) => void;
   onImport: (file: File) => void;
+  githubSettings: GitHubSyncSettings;
+  onGitHubSettingsChange: (updates: Partial<GitHubSyncSettings>) => void;
+  githubConfigured: boolean;
   onLogout: () => void;
 };
 
@@ -33,6 +38,9 @@ export function WelcomePage({
   onResume,
   onDelete,
   onImport,
+  githubSettings,
+  onGitHubSettingsChange,
+  githubConfigured,
   onLogout,
 }: Props) {
   const [url, setUrl] = useState(initialURL);
@@ -194,7 +202,7 @@ export function WelcomePage({
 
               {savedProjects.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-center text-ink-300 text-xs italic border border-dashed border-ink-600 rounded-lg p-8">
-                  I progetti vengono salvati automaticamente in IndexedDB al primo edit.
+                  I progetti vengono salvati automaticamente in IndexedDB al primo edit. GitHub sync resta separato e manuale.
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto scroll-thin pr-1">
@@ -232,6 +240,71 @@ export function WelcomePage({
                   ))}
                 </div>
               )}
+            </div>
+            <div className="lg:col-span-2 rounded-2xl border border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center text-brand-400">
+                  <Cloud size={18} />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-ink-100">GitHub sync</h2>
+                  <p className="text-[11px] text-ink-300">
+                    IndexedDB continua a salvare in locale; GitHub riceve solo snapshot espliciti con controllo revisione.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Owner</span>
+                  <input
+                    type="text"
+                    value={githubSettings.owner}
+                    onChange={(e) => onGitHubSettingsChange({ owner: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Repository</span>
+                  <input
+                    type="text"
+                    value={githubSettings.repo}
+                    onChange={(e) => onGitHubSettingsChange({ repo: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Token GitHub</span>
+                  <input
+                    type="password"
+                    value={githubSettings.token}
+                    onChange={(e) => onGitHubSettingsChange({ token: e.target.value })}
+                    placeholder="ghp_..."
+                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Label issue</span>
+                  <input
+                    type="text"
+                    value={githubSettings.label}
+                    onChange={(e) => onGitHubSettingsChange({ label: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-ink-300">
+                <span
+                  className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border ${
+                    githubConfigured ? "border-mint/40 bg-mint/10 text-mint" : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                  }`}
+                >
+                  <Cloud size={11} />
+                  {githubConfigured ? "GitHub pronto" : "Manca il token di sessione o i dettagli del repo"}
+                </span>
+                <span>Il token viene tenuto solo in sessionStorage per ridurre l'esposizione.</span>
+              </div>
             </div>
           </div>
         </div>

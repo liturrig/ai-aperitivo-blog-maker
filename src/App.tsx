@@ -32,6 +32,9 @@ import {
   Check,
   LogOut,
   FileJson,
+  AlertCircle,
+  Cloud,
+  RefreshCw,
 } from "lucide-react";
 import { MacroGroup } from "./components/MacroGroup";
 import { NewsEditor } from "./components/NewsEditor";
@@ -58,7 +61,18 @@ import {
   sourceCacheRepository,
   type ProjectDocument,
   type ProjectSnapshot,
+  type ProjectSyncState,
 } from "./lib/storage";
+import {
+  GitHubSyncConflictError,
+  buildGitHubIssueUrl,
+  isGitHubSyncConfigured,
+  loadGitHubSyncSettings,
+  saveGitHubSyncSettings,
+  syncProjectToGitHub,
+  refreshProjectFromGitHub,
+  type GitHubSyncSettings,
+} from "./lib/githubSync";
 
 const AUTH_KEY = "aisocratic:auth";
 const LEGACY_AUTH_KEY = "aperitivo:auth";
@@ -106,6 +120,10 @@ export default function App() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
   const [savedProjects, setSavedProjects] = useState<ProjectDocument[]>([]);
+  const [currentSyncState, setCurrentSyncState] = useState<ProjectSyncState | null>(null);
+  const [githubSettings, setGitHubSettings] = useState<GitHubSyncSettings>(() => loadGitHubSyncSettings());
+  const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
@@ -125,6 +143,58 @@ export default function App() {
     [model]
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
+  const githubReady = isGitHubSyncConfigured(githubSettings);
+  const githubIssueUrl = useMemo(
+    () => buildGitHubIssueUrl(githubSettings, currentSyncState?.remoteId ?? null),
+    [githubSettings, currentSyncState?.remoteId]
+  );
+  const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
+  const localAheadOfRemote =
+    Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
+  const remoteStatus = useMemo(() => {
+    if (syncBusy === "push") {
+      return {
+        text: "Sincronizzazione GitHub in corso…",
+        className: "text-brand-300",
+      };
+    }
+    if (syncBusy === "pull") {
+      return {
+        text: "Aggiornamento da GitHub in corso…",
+        className: "text-brand-300",
+      };
+    }
+    if (syncError) {
+      return {
+        text: syncError,
+        className: "text-red-300",
+      };
+    }
+    if (!githubReady) {
+      return {
+        text: "GitHub non configurato",
+        className: "text-ink-300",
+      };
+    }
+    if (!currentSyncState?.remoteId) {
+      return {
+        text: "Mai sincronizzato su GitHub",
+        className: "text-ink-300",
+      };
+    }
+    if (localAheadOfRemote) {
+      return {
+        text: `Locale avanti rispetto a GitHub · rev ${shortRevision(currentSyncState.revision)}`,
+        className: "text-amber-300",
+      };
+    }
+    return {
+      text: `GitHub allineato · rev ${shortRevision(currentSyncState.revision)}${
+        lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
+      }`,
+      className: "text-mint",
+    };
+  }, [currentSyncState?.remoteId, currentSyncState?.revision, githubReady, lastRemoteSyncAt, localAheadOfRemote, syncBusy, syncError]);
 
   function buildProjectDocument(savedAt = Date.now()): ProjectDocument | null {
     if (!model || !currentProjectId) return null;
@@ -137,6 +207,38 @@ export default function App() {
       savedAt,
       model,
     };
+  }
+
+  function buildProjectSnapshot(savedAt = Date.now()): ProjectSnapshot | null {
+    const project = buildProjectDocument(savedAt);
+    if (!project) return null;
+    return {
+      project,
+      syncState: currentSyncState,
+    };
+  }
+
+  function updateGitHubSettings(updates: Partial<GitHubSyncSettings>) {
+    setGitHubSettings((current) => saveGitHubSyncSettings({ ...current, ...updates }));
+    setSyncError(null);
+  }
+
+  async function hydrateProjectOriginalHTML(project: ProjectDocument): Promise<ProjectDocument> {
+    if (project.model.originalHTML) return project;
+    if (model && model.baseHref === project.model.baseHref && model.originalHTML) {
+      return {
+        ...project,
+        model: { ...project.model, originalHTML: model.originalHTML },
+      };
+    }
+    const cached = await sourceCacheRepository.loadCachedSource(project.sourceUrl);
+    if (cached?.html) {
+      return {
+        ...project,
+        model: { ...project.model, originalHTML: cached.html },
+      };
+    }
+    return project;
   }
 
   async function refreshSavedProjects(userId = authUser) {
@@ -275,8 +377,13 @@ export default function App() {
         return;
       }
       void (async () => {
-        if (await projectRepository.saveProject(authUser, project)) {
-          setLastSavedAt(now);
+        const snapshot = buildProjectSnapshot(now);
+        if (!snapshot) {
+          setError("Impossibile salvare il progetto corrente.");
+          return;
+        }
+        if (await projectRepository.saveProjectSnapshot(authUser, snapshot)) {
+          setLastSavedAt(snapshot.project.savedAt);
           await refreshSavedProjects(authUser);
         }
       })();
@@ -323,8 +430,11 @@ export default function App() {
         savedAt: now,
         model: parsed,
       };
-      await projectRepository.saveProject(authUser, project);
+      await projectRepository.saveProjectSnapshot(authUser, { project, syncState: null });
       setCurrentProjectId(id);
+      setCurrentSyncState(null);
+      setLastSavedAt(now);
+      setSyncError(null);
       adoptModel(parsed);
       await refreshSavedProjects(authUser);
       setUrl(sourceUrl);
@@ -343,10 +453,17 @@ export default function App() {
     );
   }
 
-  function resumeProject(p: ProjectDocument) {
-    setCurrentProjectId(p.id);
-    setUrl(p.sourceUrl);
-    adoptModel(cloneBlogModel(p.model));
+  async function resumeProject(p: ProjectDocument) {
+    if (!authUser) return;
+    const snapshot = await projectRepository.loadProjectSnapshot(authUser, p.id);
+    if (!snapshot) return;
+    const hydratedProject = await hydrateProjectOriginalHTML(snapshot.project);
+    setCurrentProjectId(hydratedProject.id);
+    setUrl(hydratedProject.sourceUrl);
+    setCurrentSyncState(snapshot.syncState ?? null);
+    setLastSavedAt(hydratedProject.savedAt);
+    setSyncError(null);
+    adoptModel(cloneBlogModel(hydratedProject.model));
   }
 
   async function removeSavedProject(p: ProjectDocument) {
@@ -357,6 +474,9 @@ export default function App() {
     if (currentProjectId === p.id) {
       // We just deleted the open project; bounce to dashboard
       setCurrentProjectId(null);
+      setCurrentSyncState(null);
+      setLastSavedAt(null);
+      setSyncError(null);
       setModel(null);
       setPreviewURL("");
     }
@@ -382,11 +502,92 @@ export default function App() {
   async function saveNow() {
     if (!model || !currentProjectId || !authUser) return;
     const now = Date.now();
-    const project = buildProjectDocument(now);
-    if (project && (await projectRepository.saveProject(authUser, project))) {
-      setLastSavedAt(now);
+    const snapshot = buildProjectSnapshot(now);
+    if (snapshot && (await projectRepository.saveProjectSnapshot(authUser, snapshot))) {
+      setLastSavedAt(snapshot.project.savedAt);
       await refreshSavedProjects(authUser);
       setJustSaved(true);
+    }
+  }
+
+  async function syncNowToGitHub() {
+    if (!model || !currentProjectId || !authUser) return;
+    if (!githubReady) {
+      setSyncError("Configura owner, repository e token GitHub nella dashboard prima di sincronizzare.");
+      return;
+    }
+    const now = Date.now();
+    const localSnapshot = buildProjectSnapshot(now);
+    if (!localSnapshot) {
+      setSyncError("Impossibile preparare il progetto per la sincronizzazione GitHub.");
+      return;
+    }
+
+    setSyncBusy("push");
+    setSyncError(null);
+
+    try {
+      if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
+        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione GitHub.");
+      }
+      const remote = await syncProjectToGitHub(githubSettings, authUser, localSnapshot);
+      await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
+      setCurrentSyncState(remote.snapshot.syncState ?? null);
+      setLastSavedAt(localSnapshot.project.savedAt);
+      setJustSaved(true);
+      await refreshSavedProjects(authUser);
+    } catch (e: unknown) {
+      if (e instanceof GitHubSyncConflictError) {
+        setSyncError(e.message);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSyncError(msg);
+      }
+    } finally {
+      setSyncBusy(null);
+    }
+  }
+
+  async function refreshFromGitHub() {
+    if (!currentProjectId || !authUser) return;
+    if (!githubReady) {
+      setSyncError("Configura owner, repository e token GitHub nella dashboard prima di usare GitHub.");
+      return;
+    }
+    if (localAheadOfRemote) {
+      const confirmed = window.confirm(
+        "Questo rimpiazzerà le modifiche locali non ancora sincronizzate con la versione remota su GitHub. Continuare?"
+      );
+      if (!confirmed) return;
+    }
+
+    setSyncBusy("pull");
+    setSyncError(null);
+
+    try {
+      const remote = await refreshProjectFromGitHub(
+        githubSettings,
+        currentProjectId,
+        currentSyncState?.remoteId ?? null
+      );
+      const hydratedProject = await hydrateProjectOriginalHTML(remote.snapshot.project);
+      const nextSnapshot: ProjectSnapshot = {
+        project: hydratedProject,
+        syncState: remote.snapshot.syncState,
+      };
+      if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
+        throw new Error("Impossibile salvare in IndexedDB la versione ricevuta da GitHub.");
+      }
+      setCurrentSyncState(nextSnapshot.syncState ?? null);
+      setLastSavedAt(nextSnapshot.project.savedAt);
+      setUrl(nextSnapshot.project.sourceUrl);
+      adoptModel(cloneBlogModel(nextSnapshot.project.model));
+      await refreshSavedProjects(authUser);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncError(msg);
+    } finally {
+      setSyncBusy(null);
     }
   }
 
@@ -410,6 +611,9 @@ export default function App() {
     }
     setAuthUser(null);
     setSavedProjects([]);
+    setCurrentSyncState(null);
+    setLastSavedAt(null);
+    setSyncError(null);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
@@ -420,7 +624,7 @@ export default function App() {
     const existingSavedAt = savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? Date.now();
     const project = buildProjectDocument(existingSavedAt);
     if (!project) return;
-    const snapshot: ProjectSnapshot = { project };
+    const snapshot: ProjectSnapshot = { project, syncState: currentSyncState };
     projectRepository.exportProjectToFile(snapshot);
   }
 
@@ -428,11 +632,14 @@ export default function App() {
     if (!authUser) return;
     try {
       const snapshot = await projectRepository.importProjectFromFile(file, authUser);
-      const project = snapshot.project;
+      const project = await hydrateProjectOriginalHTML(snapshot.project);
       await refreshSavedProjects(authUser);
       // Open the imported project immediately
       setCurrentProjectId(project.id);
       setUrl(project.sourceUrl);
+      setCurrentSyncState(snapshot.syncState ?? null);
+      setLastSavedAt(project.savedAt);
+      setSyncError(null);
       adoptModel(cloneBlogModel(project.model));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -442,6 +649,9 @@ export default function App() {
 
   function backToWelcome() {
     setMobileActionsOpen(false);
+    setCurrentSyncState(null);
+    setLastSavedAt(null);
+    setSyncError(null);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
@@ -678,6 +888,9 @@ export default function App() {
         onResume={(p) => resumeProject(p)}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
+        githubSettings={githubSettings}
+        onGitHubSettingsChange={updateGitHubSettings}
+        githubConfigured={githubReady}
         onLogout={handleLogout}
       />
     );
@@ -744,6 +957,32 @@ export default function App() {
               Salvato {formatRelative(lastSavedAt)}
             </span>
           )}
+          {model && (
+            <span className={`text-[11px] flex items-center gap-1.5 mr-1 ${remoteStatus.className}`}>
+              <Cloud size={11} />
+              {remoteStatus.text}
+            </span>
+          )}
+          <button
+            onClick={syncNowToGitHub}
+            disabled={!model || syncBusy !== null || !githubReady}
+            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title={
+              githubReady
+                ? "Salva lo snapshot locale e sincronizzalo nell'issue GitHub del progetto"
+                : "Configura owner, repository e token GitHub nella dashboard"
+            }
+          >
+            <Cloud size={13} /> Sync GitHub
+          </button>
+          <button
+            onClick={refreshFromGitHub}
+            disabled={!model || syncBusy !== null || !githubReady}
+            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Ricarica questo progetto dalla versione remota salvata su GitHub"
+          >
+            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh GitHub
+          </button>
           <button
             onClick={saveNow}
             disabled={!model}
@@ -784,6 +1023,17 @@ export default function App() {
             <FileJson size={14} /> Esporta JSON
           </button>
           <div className="w-px h-6 bg-ink-600 mx-1" />
+          {githubIssueUrl && (
+            <a
+              href={githubIssueUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-brand-400 hover:underline"
+              title="Apri l'issue GitHub collegato"
+            >
+              Issue #{currentSyncState?.remoteId}
+            </a>
+          )}
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
           <button
             onClick={handleLogout}
@@ -801,6 +1051,12 @@ export default function App() {
           {error && (
             <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
               {error}
+            </div>
+          )}
+          {syncError && (
+            <div className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm flex items-start gap-2">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>{syncError}</span>
             </div>
           )}
 
@@ -893,6 +1149,56 @@ export default function App() {
                   {PROXY_LABELS[i]}
                 </label>
               ))}
+            </div>
+          </details>
+          <details className="mt-4 text-xs text-ink-300">
+            <summary className="cursor-pointer hover:text-ink-100">
+              GitHub sync · repository e token
+            </summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Owner</span>
+                <input
+                  type="text"
+                  value={githubSettings.owner}
+                  onChange={(e) => updateGitHubSettings({ owner: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Repository</span>
+                <input
+                  type="text"
+                  value={githubSettings.repo}
+                  onChange={(e) => updateGitHubSettings({ repo: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Token GitHub</span>
+                <input
+                  type="password"
+                  value={githubSettings.token}
+                  onChange={(e) => updateGitHubSettings({ token: e.target.value })}
+                  placeholder="ghp_..."
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+                <span className="text-[11px] text-ink-300">
+                  Salvato solo in sessione. Serve accesso write alle issue del repo.
+                </span>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Label issue</span>
+                <input
+                  type="text"
+                  value={githubSettings.label}
+                  onChange={(e) => updateGitHubSettings({ label: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+              </label>
+            </div>
+            <div className="mt-2 text-[11px] text-ink-300">
+              IndexedDB resta il salvataggio automatico locale; GitHub riceve solo snapshot espliciti con controllo revisione.
             </div>
           </details>
         </section>
@@ -1001,6 +1307,20 @@ export default function App() {
                 Salvato {formatRelative(lastSavedAt)}
               </div>
             )}
+            <div className={`text-[11px] flex items-center gap-1.5 px-1 pb-1 ${remoteStatus.className}`}>
+              <Cloud size={11} />
+              {remoteStatus.text}
+            </div>
+            {githubIssueUrl && (
+              <a
+                href={githubIssueUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
+              >
+                Apri issue GitHub #{currentSyncState?.remoteId}
+              </a>
+            )}
 
             <button
               onClick={() => {
@@ -1010,6 +1330,26 @@ export default function App() {
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition"
             >
               <History size={14} /> Progetti
+            </button>
+            <button
+              onClick={() => {
+                void syncNowToGitHub();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model || syncBusy !== null || !githubReady}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Cloud size={13} /> Sync GitHub
+            </button>
+            <button
+              onClick={() => {
+                void refreshFromGitHub();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model || syncBusy !== null || !githubReady}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh GitHub
             </button>
             <button
               onClick={() => {
@@ -1129,4 +1469,8 @@ function cloneModel(m: BlogModel): BlogModel {
 }
 function escapeHTML(s: string) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+}
+
+function shortRevision(revision: string | null | undefined): string {
+  return revision ? revision.slice(0, 8) : "—";
 }

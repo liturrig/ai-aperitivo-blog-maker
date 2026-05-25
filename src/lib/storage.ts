@@ -23,6 +23,7 @@ export type ProjectDocument = {
 export type ProjectSyncState = {
   remoteId: string | null;
   revision: string | null;
+  lastSyncedAt?: number | null;
 };
 
 export type ProjectSnapshot = {
@@ -330,6 +331,7 @@ function normalizeSyncState(syncState?: ProjectSyncState | null): ProjectSyncSta
   return {
     remoteId: typeof syncState.remoteId === "string" ? syncState.remoteId : null,
     revision: typeof syncState.revision === "string" ? syncState.revision : null,
+    lastSyncedAt: typeof syncState.lastSyncedAt === "number" ? syncState.lastSyncedAt : null,
   };
 }
 
