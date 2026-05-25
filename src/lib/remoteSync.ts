@@ -10,48 +10,85 @@ import {
   syncProjectToGitHub,
   type GitHubSyncSettings,
 } from "./githubSync";
+import {
+  DEFAULT_SUPABASE_EVENTS_TABLE,
+  DEFAULT_SUPABASE_OBJECT_BUCKET,
+  DEFAULT_SUPABASE_PROJECTS_TABLE,
+  SupabaseSyncConflictError,
+  loadSupabaseSyncSettings,
+  refreshProjectFromSupabase,
+  saveSupabaseSyncSettings,
+  syncProjectToSupabase,
+  type SupabaseSyncSettings,
+} from "./supabaseSync";
 import type { ProjectSnapshot } from "./storage";
 
+const REMOTE_PROVIDER_STORAGE_KEY = "aisocratic:remote-storage-provider";
+
+export type RemoteStorageProvider = "github" | "supabase";
+
 export type RemoteStorageSettings = {
+  provider: RemoteStorageProvider;
   accessKey: string;
+  endpointUrl: string;
 };
 
-export { GitHubSyncConflictError as RemoteStorageConflictError };
+export class RemoteStorageConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RemoteStorageConflictError";
+  }
+}
 
 export function loadRemoteStorageSettings(): RemoteStorageSettings {
-  const settings = loadGitHubSyncSettings();
-  return {
-    accessKey: settings.token,
-  };
+  const provider = loadStoredProvider();
+  return provider === "supabase" ? loadSupabaseRemoteSettings() : loadGitHubRemoteSettings();
+}
+
+export function selectRemoteStorageProvider(provider: RemoteStorageProvider): RemoteStorageSettings {
+  persistRemoteProvider(provider);
+  return provider === "supabase" ? loadSupabaseRemoteSettings() : loadGitHubRemoteSettings();
 }
 
 export function saveRemoteStorageSettings(settings: RemoteStorageSettings): RemoteStorageSettings {
+  persistRemoteProvider(settings.provider);
+  if (settings.provider === "supabase") {
+    const current = loadSupabaseSyncSettings();
+    const normalized = saveSupabaseSyncSettings({
+      ...current,
+      projectUrl: settings.endpointUrl,
+      accessKey: settings.accessKey,
+    });
+    return toSupabaseRemoteSettings(normalized);
+  }
+
   const current = loadGitHubSyncSettings();
-  const accessKey = settings.accessKey.trim();
-  saveGitHubSyncSettings({
+  const normalized = saveGitHubSyncSettings({
     ...current,
-    token: accessKey,
+    token: settings.accessKey,
   });
-  return {
-    accessKey,
-  };
+  return toGitHubRemoteSettings(normalized);
 }
 
 export function isRemoteStorageReady(settings: RemoteStorageSettings): boolean {
-  return Boolean(settings.accessKey.trim());
+  return settings.provider === "supabase"
+    ? Boolean(settings.endpointUrl.trim() && settings.accessKey.trim())
+    : Boolean(settings.accessKey.trim());
 }
 
 export function buildRemoteRecordUrl(settings: RemoteStorageSettings, remoteId?: string | null): string | null {
-  const providerSettings = toProviderSettings(settings);
-  return buildGitHubIssueUrl(providerSettings, remoteId);
+  if (settings.provider === "supabase") return null;
+  return buildGitHubIssueUrl(toGitHubProviderSettings(settings), remoteId);
 }
 
-export async function syncProjectToRemote(
-  settings: RemoteStorageSettings,
-  userId: string,
-  snapshot: ProjectSnapshot
-) {
-  return syncProjectToGitHub(toProviderSettings(settings), userId, snapshot);
+export async function syncProjectToRemote(settings: RemoteStorageSettings, userId: string, snapshot: ProjectSnapshot) {
+  try {
+    return settings.provider === "supabase"
+      ? await syncProjectToSupabase(toSupabaseProviderSettings(settings), userId, snapshot)
+      : await syncProjectToGitHub(toGitHubProviderSettings(settings), userId, snapshot);
+  } catch (error) {
+    throw normalizeRemoteError(error);
+  }
 }
 
 export async function refreshProjectFromRemote(
@@ -61,10 +98,47 @@ export async function refreshProjectFromRemote(
   sourceUrl: string,
   remoteId?: string | null
 ) {
-  return refreshProjectFromGitHub(toProviderSettings(settings), userId, projectId, sourceUrl, remoteId);
+  try {
+    return settings.provider === "supabase"
+      ? await refreshProjectFromSupabase(toSupabaseProviderSettings(settings), userId, projectId, sourceUrl, remoteId)
+      : await refreshProjectFromGitHub(toGitHubProviderSettings(settings), userId, projectId, sourceUrl, remoteId);
+  } catch (error) {
+    throw normalizeRemoteError(error);
+  }
 }
 
-function toProviderSettings(settings: RemoteStorageSettings): GitHubSyncSettings {
+function loadStoredProvider(): RemoteStorageProvider {
+  if (typeof localStorage === "undefined") return "github";
+  try {
+    const provider = localStorage.getItem(REMOTE_PROVIDER_STORAGE_KEY);
+    return provider === "supabase" ? "supabase" : "github";
+  } catch {
+    return "github";
+  }
+}
+
+function persistRemoteProvider(provider: RemoteStorageProvider): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(REMOTE_PROVIDER_STORAGE_KEY, provider);
+  } catch {
+    /* noop */
+  }
+}
+
+function loadGitHubRemoteSettings(): RemoteStorageSettings {
+  return toGitHubRemoteSettings(loadGitHubSyncSettings());
+}
+
+function toGitHubRemoteSettings(settings: GitHubSyncSettings): RemoteStorageSettings {
+  return {
+    provider: "github",
+    accessKey: settings.token,
+    endpointUrl: "",
+  };
+}
+
+function toGitHubProviderSettings(settings: RemoteStorageSettings): GitHubSyncSettings {
   const current = loadGitHubSyncSettings();
   return {
     owner: current.owner || DEFAULT_GITHUB_OWNER,
@@ -72,4 +146,35 @@ function toProviderSettings(settings: RemoteStorageSettings): GitHubSyncSettings
     label: current.label || DEFAULT_GITHUB_SYNC_LABEL,
     token: settings.accessKey.trim(),
   };
+}
+
+function loadSupabaseRemoteSettings(): RemoteStorageSettings {
+  return toSupabaseRemoteSettings(loadSupabaseSyncSettings());
+}
+
+function toSupabaseRemoteSettings(settings: SupabaseSyncSettings): RemoteStorageSettings {
+  return {
+    provider: "supabase",
+    accessKey: settings.accessKey,
+    endpointUrl: settings.projectUrl,
+  };
+}
+
+function toSupabaseProviderSettings(settings: RemoteStorageSettings): SupabaseSyncSettings {
+  const current = loadSupabaseSyncSettings();
+  return {
+    projectUrl: settings.endpointUrl,
+    accessKey: settings.accessKey,
+    bucket: current.bucket || DEFAULT_SUPABASE_OBJECT_BUCKET,
+    projectsTable: current.projectsTable || DEFAULT_SUPABASE_PROJECTS_TABLE,
+    eventsTable: current.eventsTable || DEFAULT_SUPABASE_EVENTS_TABLE,
+  };
+}
+
+function normalizeRemoteError(error: unknown): Error {
+  if (error instanceof RemoteStorageConflictError) return error;
+  if (error instanceof GitHubSyncConflictError || error instanceof SupabaseSyncConflictError) {
+    return new RemoteStorageConflictError(error.message, { cause: error });
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }

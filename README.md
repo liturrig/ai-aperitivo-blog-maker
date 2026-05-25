@@ -43,8 +43,27 @@ Current workflow:
 
 - Remote publishing requires a session credential entered from the dashboard or editor.
 - The credential is kept only for the current browser session.
+- You can now choose between **GitHub Issues** and **Supabase** as the concrete remote backend.
 
 ## Notes
 
 - The remote adapter stores one seed snapshot in the shared record and appends atomic operation batches in remote comments.
 - Refresh reconstructs the current remote project by replaying those comment batches on top of the stored seed snapshot.
+
+## Supabase remote backend
+
+The Supabase implementation keeps:
+
+- the seed snapshot in object storage (`aisocratic-remote-sync`)
+- remote project metadata in `public.aisocratic_remote_projects`
+- one atomic diff row per queued UI operation in `public.aisocratic_remote_events`
+
+Setup:
+
+1. Open your Supabase SQL editor
+2. Run `supabase/remote-sync-schema.sql`
+3. In the app, choose **Supabase**
+4. Enter the project URL (`https://<project-ref>.supabase.co`)
+5. Enter a project API key for the current session
+
+For quick local testing, a service-role key works because it bypasses storage/table policies, but it should stay session-only and never be embedded in a deployed public app. If you prefer using the anon key, add the matching storage and table policies in Supabase first.

@@ -72,6 +72,7 @@ import {
   loadRemoteStorageSettings,
   refreshProjectFromRemote,
   saveRemoteStorageSettings,
+  selectRemoteStorageProvider,
   syncProjectToRemote,
   type RemoteStorageSettings,
 } from "./lib/remoteSync";
@@ -166,6 +167,11 @@ export default function App() {
   const currentRemoteId = currentSyncState?.remoteId ?? null;
   const currentRevision = currentSyncState?.revision ?? null;
   const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
+  const usesSupabaseRemote = remoteSettings.provider === "supabase";
+  const remoteCredentialLabel = usesSupabaseRemote ? "Chiave API Supabase" : "Token GitHub";
+  const remoteCredentialPlaceholder = usesSupabaseRemote
+    ? "Inserisci la project API key"
+    : "Inserisci il personal access token";
   const localAheadOfRemote =
     Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
   const remoteStatus = useMemo(() => {
@@ -455,7 +461,7 @@ export default function App() {
     if (!model || !currentProjectId || !authUser) return;
     if (!remoteReady) {
       if (trigger === "manual") {
-        setSyncError("Configura una credenziale di sessione prima di usare l'archivio remoto.");
+        setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
       }
       return;
     }
@@ -656,7 +662,7 @@ export default function App() {
   async function executeRefreshFromRemote() {
     if (!currentProjectId || !authUser) return;
     if (!remoteReady) {
-      setSyncError("Configura una credenziale di sessione prima di usare l'archivio remoto.");
+      setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
       return;
     }
 
@@ -1165,7 +1171,7 @@ export default function App() {
             title={
               remoteReady
                 ? "Forza subito l'invio del batch corrente all'archivio remoto"
-                : "Configura una credenziale di sessione nella dashboard"
+               : "Completa la configurazione dell'archivio remoto nella dashboard"
             }
           >
             <Cloud size={13} /> Invia ora
@@ -1226,7 +1232,7 @@ export default function App() {
               className="text-[11px] text-brand-400 hover:underline"
               title="Apri il record remoto collegato"
             >
-              Record #{currentSyncState?.remoteId}
+              Record remoto
             </a>
           )}
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
@@ -1382,12 +1388,48 @@ export default function App() {
             </summary>
             <div className="mt-3 grid gap-3 md:grid-cols-1">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Credenziale sessione</span>
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Backend remoto</span>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { value: "github", label: "GitHub Issues" },
+                    { value: "supabase", label: "Supabase" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setRemoteSettings(selectRemoteStorageProvider(option.value as "github" | "supabase"))
+                      }
+                      className={`px-3 py-2 rounded-lg border text-sm transition ${
+                        remoteSettings.provider === option.value
+                          ? "border-brand bg-brand/15 text-ink-100"
+                          : "border-ink-600 hover:border-brand text-ink-300"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </label>
+              {usesSupabaseRemote && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">URL progetto</span>
+                  <input
+                    type="url"
+                    value={remoteSettings.endpointUrl}
+                    onChange={(e) => updateRemoteSettings({ endpointUrl: e.target.value })}
+                    placeholder="https://your-project-ref.supabase.co"
+                    className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
+                </label>
+              )}
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">{remoteCredentialLabel}</span>
                 <input
                   type="password"
                   value={remoteSettings.accessKey}
                   onChange={(e) => updateRemoteSettings({ accessKey: e.target.value })}
-                  placeholder="Inserisci la credenziale di sessione"
+                  placeholder={remoteCredentialPlaceholder}
                   className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
                 />
                 <span className="text-[11px] text-ink-300">
@@ -1397,6 +1439,9 @@ export default function App() {
             </div>
             <div className="mt-2 text-[11px] text-ink-300">
               Il browser salva automaticamente la copia locale; la sincronizzazione remota invia batch atomici dopo una breve attesa o quando il volume di modifiche cresce.
+              {usesSupabaseRemote
+                ? " Supabase salva il seed snapshot in object storage e i diff atomici in tabelle dedicate."
+                : " GitHub conserva il seed snapshot nel record remoto e i diff atomici nella cronologia commenti."}
             </div>
           </details>
         </section>
@@ -1516,7 +1561,7 @@ export default function App() {
                 rel="noreferrer"
                 className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
               >
-                Apri record remoto #{currentSyncState?.remoteId}
+                Apri record remoto
               </a>
             )}
 
