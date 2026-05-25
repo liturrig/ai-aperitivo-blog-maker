@@ -4,6 +4,7 @@ const SETTINGS_STORAGE_KEY = "aisocratic:github-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:github-sync-token";
 const MAX_ISSUE_TITLE_LENGTH = 240;
 const MAX_GITHUB_LABEL_VALUE_LENGTH = 40;
+const GITHUB_LABEL_HASH_LENGTH = 6;
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -615,7 +616,7 @@ function normalizeLabelValue(value: string): string {
   if (!compact) return "unknown";
   if (compact.length <= MAX_GITHUB_LABEL_VALUE_LENGTH) return compact;
   const hash = hashLabelValue(compact);
-  const prefixLength = Math.max(1, MAX_GITHUB_LABEL_VALUE_LENGTH - hash.length - 1);
+  const prefixLength = Math.max(1, MAX_GITHUB_LABEL_VALUE_LENGTH - GITHUB_LABEL_HASH_LENGTH - 1);
   return `${compact.slice(0, prefixLength)}-${hash}`;
 }
 
@@ -625,5 +626,8 @@ function hashLabelValue(value: string): string {
     hash ^= char.charCodeAt(0);
     hash = Math.imul(hash, 16777619);
   }
-  return (hash >>> 0).toString(36).slice(0, 6);
+  return (hash >>> 0)
+    .toString(36)
+    .padStart(GITHUB_LABEL_HASH_LENGTH, "0")
+    .slice(-GITHUB_LABEL_HASH_LENGTH);
 }
