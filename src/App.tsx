@@ -76,6 +76,7 @@ import {
 
 const AUTH_KEY = "aisocratic:auth";
 const LEGACY_AUTH_KEY = "aperitivo:auth";
+const REVISION_DISPLAY_LENGTH = 8;
 
 function cloneBlogModel(model: BlogModel): BlogModel {
   if (typeof structuredClone === "function") return structuredClone(model);
@@ -455,9 +456,9 @@ export default function App() {
     );
   }
 
-  async function resumeProject(p: ProjectDocument) {
+  async function resumeProject(project: ProjectDocument) {
     if (!authUser) return;
-    const snapshot = await projectRepository.loadProjectSnapshot(authUser, p.id);
+    const snapshot = await projectRepository.loadProjectSnapshot(authUser, project.id);
     if (!snapshot) {
       setError("Impossibile caricare il progetto salvato selezionato.");
       return;
@@ -1518,5 +1519,5 @@ function escapeHTML(s: string) {
 }
 
 function shortRevision(revision: string | null | undefined): string {
-  return revision ? revision.slice(0, 8) : "—";
+  return revision ? revision.slice(0, REVISION_DISPLAY_LENGTH) : "—";
 }

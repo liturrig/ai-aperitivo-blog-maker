@@ -2,6 +2,7 @@ import { canonicalizeSourceUrl, type ProjectDocument, type ProjectSnapshot, type
 
 const SETTINGS_STORAGE_KEY = "aisocratic:github-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:github-sync-token";
+const MAX_ISSUE_TITLE_LENGTH = 240;
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -526,9 +527,7 @@ function toRemoteProject(
 
 function buildIssueTitle(project: ProjectDocument): string {
   const title = project.title || project.sourceUrl || "Untitled project";
-  return Array.from(`[aisocratic:${project.id}] ${title}`)
-    .slice(0, 240)
-    .join("");
+  return truncateForIssueTitle(`[aisocratic:${project.id}] ${title}`, MAX_ISSUE_TITLE_LENGTH);
 }
 
 function createRevision(): string {
@@ -548,4 +547,14 @@ function issuePath(settings: Pick<GitHubSyncSettings, "owner" | "repo">, issueNu
 
 function escapeMarkdownText(value: string): string {
   return value.replace(/([\\`*_{}[\]()#+\-.!|>])/g, "\\$1");
+}
+
+function truncateForIssueTitle(value: string, maxLength: number): string {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    const segments = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value));
+    return segments.slice(0, maxLength).map((segment) => segment.segment).join("");
+  }
+  return Array.from(value)
+    .slice(0, maxLength)
+    .join("");
 }
