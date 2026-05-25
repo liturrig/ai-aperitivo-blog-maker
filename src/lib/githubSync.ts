@@ -3,6 +3,7 @@ import { canonicalizeSourceUrl, type ProjectDocument, type ProjectSnapshot, type
 const SETTINGS_STORAGE_KEY = "aisocratic:github-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:github-sync-token";
 const MAX_ISSUE_TITLE_LENGTH = 240;
+const MAX_GITHUB_LABEL_VALUE_LENGTH = 40;
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -222,9 +223,9 @@ export async function syncProjectToGitHub(
 
 export async function refreshProjectFromGitHub(
   settings: GitHubSyncSettings,
+  userId: string,
   projectId: string,
   sourceUrl: string,
-  userId: string,
   remoteId?: string | null
 ): Promise<GitHubRemoteProject> {
   const normalizedSettings = requireGitHubSyncSettings(settings);
@@ -611,5 +612,18 @@ function normalizeLabelValue(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return compact.slice(0, 40) || "unknown";
+  if (!compact) return "unknown";
+  if (compact.length <= MAX_GITHUB_LABEL_VALUE_LENGTH) return compact;
+  const hash = hashLabelValue(compact);
+  const prefixLength = Math.max(1, MAX_GITHUB_LABEL_VALUE_LENGTH - hash.length - 1);
+  return `${compact.slice(0, prefixLength)}-${hash}`;
+}
+
+function hashLabelValue(value: string): string {
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).slice(0, 6);
 }

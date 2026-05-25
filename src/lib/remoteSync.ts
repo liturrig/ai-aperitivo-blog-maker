@@ -27,12 +27,13 @@ export function loadRemoteStorageSettings(): RemoteStorageSettings {
 
 export function saveRemoteStorageSettings(settings: RemoteStorageSettings): RemoteStorageSettings {
   const current = loadGitHubSyncSettings();
+  const accessKey = settings.accessKey.trim();
   saveGitHubSyncSettings({
     ...current,
-    token: settings.accessKey,
+    token: accessKey,
   });
   return {
-    accessKey: settings.accessKey.trim(),
+    accessKey,
   };
 }
 
@@ -60,7 +61,7 @@ export async function refreshProjectFromRemote(
   sourceUrl: string,
   remoteId?: string | null
 ) {
-  return refreshProjectFromGitHub(toProviderSettings(settings), projectId, sourceUrl, userId, remoteId);
+  return refreshProjectFromGitHub(toProviderSettings(settings), userId, projectId, sourceUrl, remoteId);
 }
 
 function toProviderSettings(settings: RemoteStorageSettings): GitHubSyncSettings {
