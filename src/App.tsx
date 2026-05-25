@@ -77,6 +77,7 @@ import {
 const AUTH_KEY = "aisocratic:auth";
 const LEGACY_AUTH_KEY = "aperitivo:auth";
 const REVISION_DISPLAY_LENGTH = 8;
+const EMPTY_REVISION_PLACEHOLDER = "—";
 
 function cloneBlogModel(model: BlogModel): BlogModel {
   if (typeof structuredClone === "function") return structuredClone(model);
@@ -1519,5 +1520,5 @@ function escapeHTML(s: string) {
 }
 
 function shortRevision(revision: string | null | undefined): string {
-  return revision ? revision.slice(0, REVISION_DISPLAY_LENGTH) : "—";
+  return revision ? revision.slice(0, REVISION_DISPLAY_LENGTH) : EMPTY_REVISION_PLACEHOLDER;
 }

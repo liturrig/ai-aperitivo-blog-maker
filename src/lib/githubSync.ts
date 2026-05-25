@@ -552,7 +552,7 @@ function escapeMarkdownText(value: string): string {
 function truncateForIssueTitle(value: string, maxLength: number): string {
   if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
     const segments = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value));
-    return segments.slice(0, maxLength).map((segment) => segment.segment).join("");
+    return segments.slice(0, maxLength).map((item) => item.segment).join("");
   }
   return Array.from(value)
     .slice(0, maxLength)
