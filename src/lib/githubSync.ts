@@ -27,6 +27,7 @@ type IssueFrontmatter = {
   format: string;
   projectId: string;
   sourceUrl: string;
+  sourceSeed: string;
   revision: string;
   savedAt: number;
   syncedAt: number;
@@ -148,10 +149,17 @@ export async function syncProjectToGitHub(
   snapshot: ProjectSnapshot
 ): Promise<GitHubRemoteProject> {
   const normalizedSettings = requireGitHubSyncSettings(settings);
-  await ensureSyncLabelExists(normalizedSettings);
 
   const localProject = snapshot.project;
-  const existingIssue = await resolveProjectIssue(normalizedSettings, localProject.id, snapshot.syncState?.remoteId ?? null);
+  const scope = buildRemoteScope(normalizedSettings.label, userId, localProject.sourceUrl);
+  await ensureSyncLabelsExist(normalizedSettings, scope.labels);
+  const existingIssue = await resolveProjectIssue(
+    normalizedSettings,
+    localProject.id,
+    localProject.sourceUrl,
+    userId,
+    snapshot.syncState?.remoteId ?? null
+  );
   const parsedRemote = existingIssue ? parseRemoteIssue(existingIssue) : null;
 
   if (existingIssue && parsedRemote && parsedRemote.frontmatter.revision !== (snapshot.syncState?.revision ?? null)) {
@@ -168,6 +176,7 @@ export async function syncProjectToGitHub(
     format: "aisocratic-github-sync-v1",
     projectId: localProject.id,
     sourceUrl: canonicalizeSourceUrl(localProject.sourceUrl),
+    sourceSeed: scope.sourceSeed,
     revision,
     savedAt: localProject.savedAt,
     syncedAt,
@@ -180,6 +189,7 @@ export async function syncProjectToGitHub(
         body: JSON.stringify({
           title: buildIssueTitle(localProject),
           body: issueBody,
+          labels: scope.labels,
         }),
       })
     : await requestGitHub<GitHubIssue>(normalizedSettings, repoPath(normalizedSettings, "/issues"), {
@@ -187,7 +197,7 @@ export async function syncProjectToGitHub(
         body: JSON.stringify({
           title: buildIssueTitle(localProject),
           body: issueBody,
-          labels: [normalizedSettings.label],
+          labels: scope.labels,
         }),
       });
 
@@ -213,10 +223,12 @@ export async function syncProjectToGitHub(
 export async function refreshProjectFromGitHub(
   settings: GitHubSyncSettings,
   projectId: string,
+  sourceUrl: string,
+  userId: string,
   remoteId?: string | null
 ): Promise<GitHubRemoteProject> {
   const normalizedSettings = requireGitHubSyncSettings(settings);
-  const issue = await resolveProjectIssue(normalizedSettings, projectId, remoteId ?? null);
+  const issue = await resolveProjectIssue(normalizedSettings, projectId, sourceUrl, userId, remoteId ?? null);
   if (!issue) {
     throw new Error("Nessun issue GitHub trovato per questo progetto.");
   }
@@ -246,46 +258,24 @@ function requireGitHubSyncSettings(settings: GitHubSyncSettings): GitHubSyncSett
   return normalized;
 }
 
-async function ensureSyncLabelExists(settings: GitHubSyncSettings): Promise<void> {
-  try {
-    await requestGitHub(settings, repoPath(settings, `/labels/${encodeURIComponent(settings.label)}`));
-  } catch (error) {
-    if (!(error instanceof GitHubApiError)) {
-      throw new Error(`Impossibile verificare la label GitHub "${settings.label}".`, { cause: error });
-    }
-    if (error.status !== 404) {
-      throw new Error(`Impossibile verificare la label GitHub "${settings.label}": ${error.message}`, {
-        cause: error,
-      });
-    }
-    try {
-      await requestGitHub(settings, repoPath(settings, "/labels"), {
-        method: "POST",
-        body: JSON.stringify({
-          name: settings.label,
-          color: "7c5cff",
-          description: "Canonical AI Socratic project snapshots",
-        }),
-      });
-    } catch (createError) {
-      const message = createError instanceof Error ? createError.message : String(createError);
-      throw new Error(`Impossibile creare la label GitHub "${settings.label}": ${message}`, {
-        cause: createError,
-      });
-    }
+async function ensureSyncLabelsExist(settings: GitHubSyncSettings, labels: string[]): Promise<void> {
+  for (const label of labels) {
+    await ensureSyncLabelExists(settings, label);
   }
 }
 
 async function resolveProjectIssue(
   settings: GitHubSyncSettings,
   projectId: string,
+  sourceUrl: string,
+  userId: string,
   remoteId: string | null
 ): Promise<GitHubIssue | null> {
   if (remoteId) {
     const direct = await loadIssueByRemoteId(settings, remoteId);
     if (direct) return direct;
   }
-  return findIssueByProjectId(settings, projectId);
+  return findIssueByProjectId(settings, projectId, sourceUrl, userId);
 }
 
 async function loadIssueByRemoteId(settings: GitHubSyncSettings, remoteId: string): Promise<GitHubIssue | null> {
@@ -300,9 +290,15 @@ async function loadIssueByRemoteId(settings: GitHubSyncSettings, remoteId: strin
   }
 }
 
-async function findIssueByProjectId(settings: GitHubSyncSettings, projectId: string): Promise<GitHubIssue | null> {
+async function findIssueByProjectId(
+  settings: GitHubSyncSettings,
+  projectId: string,
+  sourceUrl: string,
+  userId: string
+): Promise<GitHubIssue | null> {
+  const scope = buildRemoteScope(settings.label, userId, sourceUrl);
   const query = encodeURIComponent(
-    `repo:${settings.owner}/${settings.repo} is:issue label:"${settings.label}" in:title "[aisocratic:${projectId}]"`
+    `repo:${settings.owner}/${settings.repo} is:issue ${scope.labels.map((label) => `label:"${label}"`).join(" ")} in:title "[aisocratic:${projectId}]"`
   );
   const response = await requestGitHub<GitHubSearchResponse>(settings, `/search/issues?q=${query}&per_page=10`);
   for (const item of response.items) {
@@ -384,6 +380,7 @@ function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; 
     frontmatter.format !== "aisocratic-github-sync-v1" ||
     typeof frontmatter.projectId !== "string" ||
     typeof frontmatter.sourceUrl !== "string" ||
+    typeof frontmatter.sourceSeed !== "string" ||
     typeof frontmatter.revision !== "string" ||
     typeof frontmatter.savedAt !== "number" ||
     typeof frontmatter.syncedAt !== "number" ||
@@ -557,4 +554,62 @@ function truncateForIssueTitle(value: string, maxLength: number): string {
   return Array.from(value)
     .slice(0, maxLength)
     .join("");
+}
+
+async function ensureSyncLabelExists(settings: GitHubSyncSettings, label: string): Promise<void> {
+  try {
+    await requestGitHub(settings, repoPath(settings, `/labels/${encodeURIComponent(label)}`));
+  } catch (error) {
+    if (!(error instanceof GitHubApiError)) {
+      throw new Error(`Impossibile verificare la label GitHub "${label}".`, { cause: error });
+    }
+    if (error.status !== 404) {
+      throw new Error(`Impossibile verificare la label GitHub "${label}": ${error.message}`, {
+        cause: error,
+      });
+    }
+    try {
+      await requestGitHub(settings, repoPath(settings, "/labels"), {
+        method: "POST",
+        body: JSON.stringify({
+          name: label,
+          color: label === settings.label ? "7c5cff" : "5fffce",
+          description: label === settings.label ? "Canonical AI Socratic project snapshots" : "Scoped AI Socratic sync label",
+        }),
+      });
+    } catch (createError) {
+      const message = createError instanceof Error ? createError.message : String(createError);
+      throw new Error(`Impossibile creare la label GitHub "${label}": ${message}`, {
+        cause: createError,
+      });
+    }
+  }
+}
+
+function buildRemoteScope(baseLabel: string, userId: string, sourceUrl: string) {
+  const sourceSeed = buildSourceSeed(sourceUrl);
+  return {
+    sourceSeed,
+    labels: [baseLabel, `aisocratic-user:${normalizeLabelValue(userId)}`, `aisocratic-source:${normalizeLabelValue(sourceSeed)}`],
+  };
+}
+
+function buildSourceSeed(sourceUrl: string): string {
+  const canonical = canonicalizeSourceUrl(sourceUrl);
+  try {
+    const url = new URL(canonical);
+    const segments = url.pathname.split("/").filter(Boolean);
+    return segments[segments.length - 1] || url.hostname;
+  } catch {
+    return canonical || "unknown-source";
+  }
+}
+
+function normalizeLabelValue(value: string): string {
+  const compact = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return compact.slice(0, 40) || "unknown";
 }

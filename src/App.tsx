@@ -64,15 +64,15 @@ import {
   type ProjectSyncState,
 } from "./lib/storage";
 import {
-  GitHubSyncConflictError,
-  buildGitHubIssueUrl,
-  isGitHubSyncConfigured,
-  loadGitHubSyncSettings,
-  saveGitHubSyncSettings,
-  syncProjectToGitHub,
-  refreshProjectFromGitHub,
-  type GitHubSyncSettings,
-} from "./lib/githubSync";
+  RemoteStorageConflictError,
+  buildRemoteRecordUrl,
+  isRemoteStorageReady,
+  loadRemoteStorageSettings,
+  refreshProjectFromRemote,
+  saveRemoteStorageSettings,
+  syncProjectToRemote,
+  type RemoteStorageSettings,
+} from "./lib/remoteSync";
 
 const AUTH_KEY = "aisocratic:auth";
 const LEGACY_AUTH_KEY = "aperitivo:auth";
@@ -123,7 +123,7 @@ export default function App() {
   const [justSaved, setJustSaved] = useState(false);
   const [savedProjects, setSavedProjects] = useState<ProjectDocument[]>([]);
   const [currentSyncState, setCurrentSyncState] = useState<ProjectSyncState | null>(null);
-  const [githubSettings, setGitHubSettings] = useState<GitHubSyncSettings>(() => loadGitHubSyncSettings());
+  const [remoteSettings, setRemoteSettings] = useState<RemoteStorageSettings>(() => loadRemoteStorageSettings());
   const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingRemoteRefresh, setPendingRemoteRefresh] = useState(false);
@@ -146,10 +146,10 @@ export default function App() {
     [model]
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
-  const githubReady = isGitHubSyncConfigured(githubSettings);
-  const githubIssueUrl = useMemo(
-    () => buildGitHubIssueUrl(githubSettings, currentSyncState?.remoteId ?? null),
-    [githubSettings, currentSyncState?.remoteId]
+  const remoteReady = isRemoteStorageReady(remoteSettings);
+  const remoteRecordUrl = useMemo(
+    () => buildRemoteRecordUrl(remoteSettings, currentSyncState?.remoteId ?? null),
+    [remoteSettings, currentSyncState?.remoteId]
   );
   const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
   const localAheadOfRemote =
@@ -157,13 +157,13 @@ export default function App() {
   const remoteStatus = useMemo(() => {
     if (syncBusy === "push") {
       return {
-        text: "Sincronizzazione GitHub in corso…",
+        text: "Sincronizzazione remota in corso…",
         className: "text-brand-300",
       };
     }
     if (syncBusy === "pull") {
       return {
-        text: "Aggiornamento da GitHub in corso…",
+        text: "Aggiornamento remoto in corso…",
         className: "text-brand-300",
       };
     }
@@ -173,31 +173,31 @@ export default function App() {
         className: "text-red-300",
       };
     }
-    if (!githubReady) {
+    if (!remoteReady) {
       return {
-        text: "GitHub non configurato",
+        text: "Archivio remoto non configurato",
         className: "text-ink-300",
       };
     }
     if (!currentSyncState?.remoteId) {
       return {
-        text: "Mai sincronizzato su GitHub",
+        text: "Mai pubblicato in remoto",
         className: "text-ink-300",
       };
     }
     if (localAheadOfRemote) {
       return {
-        text: `Locale avanti rispetto a GitHub · rev ${shortRevision(currentSyncState.revision)}`,
+        text: `Modifiche locali non pubblicate · rev ${shortRevision(currentSyncState.revision)}`,
         className: "text-amber-300",
       };
     }
     return {
-      text: `GitHub allineato · rev ${shortRevision(currentSyncState.revision)}${
+      text: `Archivio remoto allineato · rev ${shortRevision(currentSyncState.revision)}${
         lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
       }`,
       className: "text-mint",
     };
-  }, [currentSyncState?.remoteId, currentSyncState?.revision, githubReady, lastRemoteSyncAt, localAheadOfRemote, syncBusy, syncError]);
+  }, [currentSyncState?.remoteId, currentSyncState?.revision, remoteReady, lastRemoteSyncAt, localAheadOfRemote, syncBusy, syncError]);
 
   function buildProjectDocument(savedAt = Date.now()): ProjectDocument | null {
     if (!model || !currentProjectId) return null;
@@ -221,8 +221,8 @@ export default function App() {
     };
   }
 
-  function updateGitHubSettings(updates: Partial<GitHubSyncSettings>) {
-    setGitHubSettings((current) => saveGitHubSyncSettings({ ...current, ...updates }));
+  function updateRemoteSettings(updates: Partial<RemoteStorageSettings>) {
+    setRemoteSettings((current) => saveRemoteStorageSettings({ ...current, ...updates }));
     setSyncError(null);
   }
 
@@ -518,16 +518,16 @@ export default function App() {
     }
   }
 
-  async function syncNowToGitHub() {
+  async function syncNowToRemote() {
     if (!model || !currentProjectId || !authUser) return;
-    if (!githubReady) {
-      setSyncError("Configura owner, repository e token GitHub nella dashboard prima di sincronizzare.");
+    if (!remoteReady) {
+      setSyncError("Configura una chiave di accesso prima di pubblicare nell'archivio remoto.");
       return;
     }
     const now = Date.now();
     const localSnapshot = buildProjectSnapshot(now);
     if (!localSnapshot) {
-      setSyncError("Impossibile preparare il progetto per la sincronizzazione GitHub.");
+      setSyncError("Impossibile preparare il progetto per la sincronizzazione remota.");
       return;
     }
 
@@ -537,16 +537,16 @@ export default function App() {
 
     try {
       if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
-        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione GitHub.");
+      throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione remota.");
       }
-      const remote = await syncProjectToGitHub(githubSettings, authUser, localSnapshot);
+    const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
       await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
       setCurrentSyncState(remote.snapshot.syncState ?? null);
       setLastSavedAt(localSnapshot.project.savedAt);
       setJustSaved(true);
       await refreshSavedProjects(authUser);
     } catch (e: unknown) {
-      if (e instanceof GitHubSyncConflictError) {
+    if (e instanceof RemoteStorageConflictError) {
         setSyncError(e.message);
       } else {
         const msg = e instanceof Error ? e.message : String(e);
@@ -557,10 +557,10 @@ export default function App() {
     }
   }
 
-  async function executeRefreshFromGitHub() {
+  async function executeRefreshFromRemote() {
     if (!currentProjectId || !authUser) return;
-    if (!githubReady) {
-      setSyncError("Configura owner, repository e token GitHub nella dashboard prima di usare GitHub.");
+    if (!remoteReady) {
+      setSyncError("Configura una chiave di accesso prima di usare l'archivio remoto.");
       return;
     }
 
@@ -569,9 +569,11 @@ export default function App() {
     setPendingRemoteRefresh(false);
 
     try {
-      const remote = await refreshProjectFromGitHub(
-        githubSettings,
+      const remote = await refreshProjectFromRemote(
+        remoteSettings,
+        authUser,
         currentProjectId,
+        model?.baseHref || url,
         currentSyncState?.remoteId ?? null
       );
       const hydratedProject = await hydrateProjectOriginalHTML(remote.snapshot.project);
@@ -580,7 +582,7 @@ export default function App() {
         syncState: remote.snapshot.syncState,
       };
       if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
-        throw new Error("Impossibile salvare in IndexedDB la versione ricevuta da GitHub.");
+        throw new Error("Impossibile salvare nel browser la versione ricevuta dall'archivio remoto.");
       }
       setCurrentSyncState(nextSnapshot.syncState ?? null);
       setLastSavedAt(nextSnapshot.project.savedAt);
@@ -596,12 +598,12 @@ export default function App() {
     }
   }
 
-  function refreshFromGitHub() {
+  function refreshFromRemote() {
     if (localAheadOfRemote) {
       setPendingRemoteRefresh(true);
       return;
     }
-    void executeRefreshFromGitHub();
+    void executeRefreshFromRemote();
   }
 
   function handleLogin(username: string) {
@@ -906,9 +908,9 @@ export default function App() {
         }}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
-        githubSettings={githubSettings}
-        onGitHubSettingsChange={updateGitHubSettings}
-        githubConfigured={githubReady}
+        remoteSettings={remoteSettings}
+        onRemoteSettingsChange={updateRemoteSettings}
+        remoteConfigured={remoteReady}
         onLogout={handleLogout}
       />
     );
@@ -969,7 +971,7 @@ export default function App() {
           {lastSavedAt && model && (
             <span
               className="text-[11px] text-ink-300 flex items-center gap-1.5 mr-1"
-              title={`Auto-salvato in IndexedDB · ${new Date(lastSavedAt).toLocaleString()}`}
+              title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
             >
               <SaveIcon size={11} className="text-mint" />
               Salvato {formatRelative(lastSavedAt)}
@@ -982,24 +984,24 @@ export default function App() {
             </span>
           )}
           <button
-            onClick={syncNowToGitHub}
-            disabled={!model || syncBusy !== null || !githubReady}
+            onClick={syncNowToRemote}
+            disabled={!model || syncBusy !== null || !remoteReady}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             title={
-              githubReady
-                ? "Salva lo snapshot locale e sincronizzalo nell'issue GitHub del progetto"
-                : "Configura owner, repository e token GitHub nella dashboard"
+              remoteReady
+                ? "Pubblica lo stato corrente nell'archivio remoto"
+                : "Configura una chiave di accesso nella dashboard"
             }
           >
-            <Cloud size={13} /> Sync GitHub
+            <Cloud size={13} /> Pubblica
           </button>
           <button
-            onClick={refreshFromGitHub}
-            disabled={!model || syncBusy !== null || !githubReady}
+            onClick={refreshFromRemote}
+            disabled={!model || syncBusy !== null || !remoteReady}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Ricarica questo progetto dalla versione remota salvata su GitHub"
+            title="Ricarica questo progetto dalla versione pubblicata nell'archivio remoto"
           >
-            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh GitHub
+            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
           </button>
           <button
             onClick={saveNow}
@@ -1041,15 +1043,15 @@ export default function App() {
             <FileJson size={14} /> Esporta JSON
           </button>
           <div className="w-px h-6 bg-ink-600 mx-1" />
-          {githubIssueUrl && (
+          {remoteRecordUrl && (
             <a
-              href={githubIssueUrl}
+              href={remoteRecordUrl}
               target="_blank"
               rel="noreferrer"
               className="text-[11px] text-brand-400 hover:underline"
-              title="Apri l'issue GitHub collegato"
+              title="Apri il record remoto collegato"
             >
-              Issue #{currentSyncState?.remoteId}
+              Record #{currentSyncState?.remoteId}
             </a>
           )}
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
@@ -1085,9 +1087,9 @@ export default function App() {
               <div className="flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div>
-                  <div className="font-medium">GitHub sostituirà le modifiche locali non ancora sincronizzate.</div>
+                  <div className="font-medium">L'archivio remoto sostituirà le modifiche locali non ancora pubblicate.</div>
                   <div className="mt-1 text-amber-200">
-                    Se vuoi mantenere il lavoro corrente, usa prima “Sync GitHub”.
+                    Se vuoi mantenere il lavoro corrente, usa prima “Pubblica”.
                   </div>
                 </div>
               </div>
@@ -1099,10 +1101,10 @@ export default function App() {
                   Annulla
                 </button>
                 <button
-                  onClick={() => void executeRefreshFromGitHub()}
+                  onClick={() => void executeRefreshFromRemote()}
                   className="px-3 py-2 rounded-lg bg-amber-400 hover:brightness-110 text-ink-950 text-xs font-semibold transition"
                 >
-                  Sostituisci con GitHub
+                  Sostituisci con archivio remoto
                 </button>
               </div>
             </div>
@@ -1201,52 +1203,25 @@ export default function App() {
           </details>
           <details className="mt-4 text-xs text-ink-300">
             <summary className="cursor-pointer hover:text-ink-100">
-              GitHub sync · repository e token
+              Archivio remoto · accesso
             </summary>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="mt-3 grid gap-3 md:grid-cols-1">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Owner</span>
-                <input
-                  type="text"
-                  value={githubSettings.owner}
-                  onChange={(e) => updateGitHubSettings({ owner: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Repository</span>
-                <input
-                  type="text"
-                  value={githubSettings.repo}
-                  onChange={(e) => updateGitHubSettings({ repo: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Token GitHub</span>
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Chiave accesso</span>
                 <input
                   type="password"
-                  value={githubSettings.token}
-                  onChange={(e) => updateGitHubSettings({ token: e.target.value })}
-                  placeholder="ghp_..."
+                  value={remoteSettings.accessKey}
+                  onChange={(e) => updateRemoteSettings({ accessKey: e.target.value })}
+                  placeholder="Inserisci la chiave di accesso"
                   className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
                 />
                 <span className="text-[11px] text-ink-300">
-                  Salvato solo in sessione. Serve accesso write alle issue del repo.
+                  Tenuta solo per la sessione corrente.
                 </span>
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Label issue</span>
-                <input
-                  type="text"
-                  value={githubSettings.label}
-                  onChange={(e) => updateGitHubSettings({ label: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                />
               </label>
             </div>
             <div className="mt-2 text-[11px] text-ink-300">
-              IndexedDB resta il salvataggio automatico locale; GitHub riceve solo snapshot espliciti con controllo revisione.
+              Il browser salva automaticamente la copia locale; la pubblicazione remota resta esplicita e controllata.
             </div>
           </details>
         </section>
@@ -1349,7 +1324,7 @@ export default function App() {
             {lastSavedAt && (
               <div
                 className="text-[11px] text-ink-300 flex items-center gap-1.5 px-1 pb-1"
-                title={`Auto-salvato in IndexedDB · ${new Date(lastSavedAt).toLocaleString()}`}
+                title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
               >
                 <SaveIcon size={11} className="text-mint" />
                 Salvato {formatRelative(lastSavedAt)}
@@ -1359,14 +1334,14 @@ export default function App() {
               <Cloud size={11} />
               {remoteStatus.text}
             </div>
-            {githubIssueUrl && (
+            {remoteRecordUrl && (
               <a
-                href={githubIssueUrl}
+                href={remoteRecordUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
               >
-                Apri issue GitHub #{currentSyncState?.remoteId}
+                Apri record remoto #{currentSyncState?.remoteId}
               </a>
             )}
 
@@ -1381,23 +1356,23 @@ export default function App() {
             </button>
             <button
               onClick={() => {
-                void syncNowToGitHub();
+                void syncNowToRemote();
                 setMobileActionsOpen(false);
               }}
-              disabled={!model || syncBusy !== null || !githubReady}
+              disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Cloud size={13} /> Sync GitHub
+              <Cloud size={13} /> Pubblica
             </button>
             <button
               onClick={() => {
-                void refreshFromGitHub();
+                void refreshFromRemote();
                 setMobileActionsOpen(false);
               }}
-              disabled={!model || syncBusy !== null || !githubReady}
+              disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh GitHub
+              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
             </button>
             <button
               onClick={() => {

@@ -18,38 +18,32 @@ npm run build
 
 ## How saving works
 
-- **IndexedDB** is still the automatic local save layer.
-- Local edits are auto-saved in the browser after a short debounce.
-- **GitHub sync is separate and explicit**: it writes the current snapshot to a GitHub issue only when you click **Sync GitHub**.
+- The working copy is auto-saved in the browser after a short debounce.
+- Publishing to shared storage is a separate, explicit action.
+- Refreshing from shared storage replaces the current local snapshot only after the revision check passes.
 
-## GitHub sync
+## Shared storage workflow
 
-The app can mirror one project to one GitHub issue:
+Each project keeps:
 
-- the **issue body** stores the canonical shared project snapshot
-- **issue comments** are used only as audit/history entries
-- each sync writes a new **revision**
-- if the remote revision changed, the app blocks overwriting and asks you to **Refresh GitHub** first
+- a stable project identifier
+- a remote revision
+- the last successful remote sync timestamp
+- user and source-seed scope metadata for remote filtering
 
-### Configure it
-
-From the dashboard or the editor:
-
-1. enter the GitHub **owner**
-2. enter the GitHub **repository**
-3. paste a GitHub token with permission to read/write issues for that repo
-4. optionally change the issue label used for synced projects
-
-The token is stored in **sessionStorage only** so it is cleared when the browser session ends.
-
-### Current workflow
+Current workflow:
 
 1. Edit normally
-2. Let IndexedDB auto-save locally, or click **Salva**
-3. Click **Sync GitHub** to push the current snapshot
-4. Click **Refresh GitHub** to replace the local project with the remote snapshot
+2. Let the browser autosave locally, or click **Salva**
+3. Click **Pubblica** to push the current snapshot to shared storage
+4. Click **Aggiorna remoto** to replace the local project with the latest published snapshot
+
+## Access
+
+- Remote publishing requires an access key entered from the dashboard or editor.
+- The access key is kept only for the current browser session.
 
 ## Notes
 
-- GitHub sync keeps the local IndexedDB model as the source of in-progress edits.
-- Remote sync currently ships as an explicit save/refresh flow; batched remote autosave can be layered on later without making GitHub the live edit log.
+- The current remote flow is still explicit publish/refresh.
+- Batched remote autosave is not enabled in this version.
