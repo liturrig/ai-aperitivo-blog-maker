@@ -18,6 +18,7 @@ const PRIMARY_LABEL_COLOR = "7c5cff";
 const SCOPE_LABEL_COLOR = "5fffce";
 const PRIMARY_LABEL_DESCRIPTION = "Canonical AI Socratic project snapshots";
 const SCOPE_LABEL_DESCRIPTION = "Scoped AI Socratic sync label";
+const MAX_REMOTE_EVENT_COMMENT_PAGES = 10;
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -221,7 +222,7 @@ export async function syncProjectToGitHub(
   });
 
   const shouldUpdateIssueBody =
-    !parsedRemote || JSON.stringify(toRemoteProjectDocument(parsedRemote.project)) !== JSON.stringify(seedProject);
+    !parsedRemote || !sameProjectDocument(parsedRemote.project, seedProject);
   const issue = existingIssue
     ? await requestGitHub<GitHubIssue>(normalizedSettings, issuePath(normalizedSettings, existingIssue.number), {
         method: "PATCH",
@@ -417,7 +418,7 @@ async function requestGitHub<T>(
 
 async function listRemoteEvents(settings: GitHubSyncSettings, issueNumber: number): Promise<RemoteCommentEvent[]> {
   const events: RemoteCommentEvent[] = [];
-  for (let page = 1; page <= 10; page += 1) {
+  for (let page = 1; page <= MAX_REMOTE_EVENT_COMMENT_PAGES; page += 1) {
     const comments = await requestGitHub<GitHubIssueComment[]>(
       settings,
       `${issuePath(settings, issueNumber, "/comments")}?per_page=100&page=${page}`
@@ -758,4 +759,58 @@ function hashLabelValue(value: string): string {
     .toString(36)
     .padStart(GITHUB_LABEL_HASH_LENGTH, "0")
     .slice(-GITHUB_LABEL_HASH_LENGTH);
+}
+
+function sameProjectDocument(left: ProjectDocument, right: ProjectDocument): boolean {
+  return (
+    left.id === right.id &&
+    left.sourceUrl === right.sourceUrl &&
+    left.title === right.title &&
+    left.createdAt === right.createdAt &&
+    left.savedAt === right.savedAt &&
+    left.model.preHTML === right.model.preHTML &&
+    left.model.baseHref === right.model.baseHref &&
+    left.model.originalHTML === right.model.originalHTML &&
+    left.model.header.title === right.model.header.title &&
+    left.model.header.meta === right.model.header.meta &&
+    left.model.header.heroImg === right.model.header.heroImg &&
+    sameMacros(left.model.macros, right.model.macros)
+  );
+}
+
+function sameMacros(left: ProjectDocument["model"]["macros"], right: ProjectDocument["model"]["macros"]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((macro, index) => {
+      const candidate = right[index];
+      return (
+        macro.id === candidate.id &&
+        macro.title === candidate.title &&
+        macro.headingHTML === candidate.headingHTML &&
+        macro.introHTML === candidate.introHTML &&
+        macro.custom === candidate.custom &&
+        sameItems(macro.items, candidate.items)
+      );
+    })
+  );
+}
+
+function sameItems(left: ProjectDocument["model"]["macros"][number]["items"], right: ProjectDocument["model"]["macros"][number]["items"]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => {
+      const candidate = right[index];
+      return (
+        item.id === candidate.id &&
+        item.title === candidate.title &&
+        item.level === candidate.level &&
+        item.headingHTML === candidate.headingHTML &&
+        item.bodyHTML === candidate.bodyHTML &&
+        item.imageUrl === candidate.imageUrl &&
+        item.snippet === candidate.snippet &&
+        item.columnsGroupId === candidate.columnsGroupId &&
+        item.custom === candidate.custom
+      );
+    })
+  );
 }

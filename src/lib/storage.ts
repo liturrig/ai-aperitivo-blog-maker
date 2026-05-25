@@ -262,6 +262,8 @@ export function cloneProjectDocument(project: ProjectDocument): ProjectDocument 
   return JSON.parse(JSON.stringify(project)) as ProjectDocument;
 }
 
+/** Replays a sequence of generic project operations on top of a stable seed snapshot
+ *  and returns the reconstructed project document at the requested save timestamp. */
 export function applyProjectOperations(
   seedProject: ProjectDocument,
   operations: ProjectChangeOperation[],

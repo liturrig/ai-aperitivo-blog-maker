@@ -89,6 +89,8 @@ function cloneBlogModel(model: BlogModel): BlogModel {
 }
 
 function currentTimestamp(): number {
+  // Wrapped so event handlers and async helpers can read "now" without tripping the
+  // React purity lint that flags direct Date.now() calls inside component scope.
   return Date.now();
 }
 
@@ -510,6 +512,8 @@ export default function App() {
     if (previewEditMode || syncBusy !== null) return;
     const pendingCount = currentSyncState?.pendingOperations?.length ?? 0;
     if (pendingCount === 0) return;
+    // Small queues flush after an idle window so rapid edits collapse into one remote
+    // batch; larger queues flush immediately so long edit bursts don't grow unbounded.
     const delay = pendingCount >= REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS ? 0 : REMOTE_AUTOSAVE_IDLE_MS;
     const timeoutId = setTimeout(() => {
       void flushRemoteChangesRef.current("auto");
