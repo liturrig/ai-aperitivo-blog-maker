@@ -138,6 +138,7 @@ export default function App() {
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
+  const flushRemoteChangesRef = useRef<(trigger: "manual" | "auto") => Promise<void>>(async () => {});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -159,11 +160,13 @@ export default function App() {
     () => buildRemoteRecordUrl(remoteSettings, currentSyncState?.remoteId ?? null),
     [remoteSettings, currentSyncState?.remoteId]
   );
+  const pendingOperationCount = currentSyncState?.pendingOperations?.length ?? 0;
+  const currentRemoteId = currentSyncState?.remoteId ?? null;
+  const currentRevision = currentSyncState?.revision ?? null;
   const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
   const localAheadOfRemote =
     Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
-  const remoteStatus = (() => {
-    const pendingCount = currentSyncState?.pendingOperations?.length ?? 0;
+  const remoteStatus = useMemo(() => {
     if (syncBusy === "push") {
       return {
         text: "Sincronizzazione remota in corso…",
@@ -188,31 +191,31 @@ export default function App() {
         className: "text-ink-300",
       };
     }
-    if (!currentSyncState?.remoteId) {
+    if (!currentRemoteId) {
       return {
-        text: pendingCount > 0 ? `Pubblicazione iniziale in coda · ${pendingCount} modifiche` : "Mai pubblicato in remoto",
+        text: pendingOperationCount > 0 ? `Pubblicazione iniziale in coda · ${pendingOperationCount} modifiche` : "Mai pubblicato in remoto",
         className: "text-ink-300",
       };
     }
-    if (pendingCount > 0) {
+    if (pendingOperationCount > 0) {
       return {
-        text: `Pubblicazione automatica in coda · ${pendingCount} modifiche`,
+        text: `Pubblicazione automatica in coda · ${pendingOperationCount} modifiche`,
         className: "text-amber-300",
       };
     }
     if (localAheadOfRemote) {
       return {
-        text: `Modifiche locali non pubblicate · rev ${shortRevision(currentSyncState.revision)}`,
+        text: `Modifiche locali non pubblicate · rev ${shortRevision(currentRevision)}`,
         className: "text-amber-300",
       };
     }
     return {
-      text: `Archivio remoto allineato · rev ${shortRevision(currentSyncState.revision)}${
+      text: `Archivio remoto allineato · rev ${shortRevision(currentRevision)}${
         lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
       }`,
       className: "text-mint",
     };
-  })();
+  }, [currentRemoteId, currentRevision, lastRemoteSyncAt, localAheadOfRemote, pendingOperationCount, remoteReady, syncBusy, syncError]);
 
   function buildProjectDocument(savedAt: number): ProjectDocument | null {
     if (!model || !currentProjectId) return null;
@@ -498,7 +501,10 @@ export default function App() {
     }
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    flushRemoteChangesRef.current = flushRemoteChanges;
+  });
+
   useEffect(() => {
     if (!model || !currentProjectId || !authUser || !remoteReady) return;
     if (previewEditMode || syncBusy !== null) return;
@@ -506,7 +512,7 @@ export default function App() {
     if (pendingCount === 0) return;
     const delay = pendingCount >= REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS ? 0 : REMOTE_AUTOSAVE_IDLE_MS;
     const timeoutId = setTimeout(() => {
-      void flushRemoteChanges("auto");
+      void flushRemoteChangesRef.current("auto");
     }, delay);
     return () => clearTimeout(timeoutId);
   }, [
@@ -861,7 +867,7 @@ export default function App() {
       const newIndex = model.macros.findIndex((m) => m.id === overId);
       if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
       const reordered = arrayMove(model.macros, oldIndex, newIndex);
-      setModel((m) => (m ? { ...m, macros: arrayMove(m.macros, oldIndex, newIndex) } : m));
+      setModel((m) => (m ? { ...m, macros: reordered } : m));
       enqueueOperations(
         [{ type: "reorder-macros", macroIds: reordered.map((macro) => macro.id) }],
         buildProjectDocument(currentTimestamp())

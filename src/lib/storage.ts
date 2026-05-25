@@ -508,7 +508,7 @@ export function normalizeProjectChangeOperations(value: unknown): ProjectChangeO
   const operations = value
     .map((operation) => normalizeProjectChangeOperation(operation))
     .filter((operation): operation is ProjectChangeOperation => operation !== null);
-  return operations.length ? operations : [];
+  return operations.length ? operations : null;
 }
 
 function normalizeProjectChangeOperation(value: unknown): ProjectChangeOperation | null {

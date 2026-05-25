@@ -184,7 +184,7 @@ export async function syncProjectToGitHub(
   const normalizedSettings = requireGitHubSyncSettings(settings);
 
   const localProject = snapshot.project;
-  const seedProject = toRemoteProjectDocument(snapshot.syncState?.seedProject ?? localProject);
+  const localSeedProject = snapshot.syncState?.seedProject ?? localProject;
   const pendingOperations = snapshot.syncState?.pendingOperations ?? [];
   const scope = buildRemoteScope(normalizedSettings.label, userId, localProject.sourceUrl);
   await ensureSyncLabelsExist(normalizedSettings, scope.labels);
@@ -198,6 +198,7 @@ export async function syncProjectToGitHub(
   const parsedRemote = existingIssue ? parseRemoteIssue(existingIssue) : null;
   const remoteEvents = existingIssue ? await listRemoteEvents(normalizedSettings, existingIssue.number) : [];
   const remoteState = parsedRemote ? buildRemoteProjectState(parsedRemote, remoteEvents) : null;
+  const seedProject = toRemoteProjectDocument(remoteState?.seedProject ?? localSeedProject);
 
   if (existingIssue && remoteState && remoteState.revision !== (snapshot.syncState?.revision ?? null)) {
     throw new GitHubSyncConflictError(
@@ -219,11 +220,14 @@ export async function syncProjectToGitHub(
     userId,
   });
 
+  const shouldUpdateIssueBody =
+    !parsedRemote || JSON.stringify(toRemoteProjectDocument(parsedRemote.project)) !== JSON.stringify(seedProject);
   const issue = existingIssue
     ? await requestGitHub<GitHubIssue>(normalizedSettings, issuePath(normalizedSettings, existingIssue.number), {
         method: "PATCH",
         body: JSON.stringify({
           title: buildIssueTitle(localProject),
+          ...(shouldUpdateIssueBody ? { body: issueBody } : {}),
           labels: scope.labels,
         }),
       })
@@ -257,7 +261,7 @@ export async function syncProjectToGitHub(
     remoteId: String(issue.number),
     revision,
     lastSyncedAt: syncedAt,
-    seedProject: snapshot.syncState?.seedProject ? cloneProjectDocument(snapshot.syncState.seedProject) : cloneProjectDocument(localProject),
+    seedProject: cloneProjectDocument(remoteState?.seedProject ?? localSeedProject),
     pendingOperations: [],
   };
 
