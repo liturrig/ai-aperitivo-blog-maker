@@ -54,11 +54,13 @@ import {
 } from "./lib/parser";
 import {
   canonicalizeSourceUrl,
+  cloneProjectDocument,
   formatRelative,
   normalizeUserId,
   newProjectId,
   projectRepository,
   sourceCacheRepository,
+  type ProjectChangeOperation,
   type ProjectDocument,
   type ProjectSnapshot,
   type ProjectSyncState,
@@ -78,10 +80,16 @@ const AUTH_KEY = "aisocratic:auth";
 const LEGACY_AUTH_KEY = "aperitivo:auth";
 const REVISION_DISPLAY_LENGTH = 8;
 const EMPTY_REVISION_PLACEHOLDER = "—";
+const REMOTE_AUTOSAVE_IDLE_MS = 5000;
+const REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS = 10;
 
 function cloneBlogModel(model: BlogModel): BlogModel {
   if (typeof structuredClone === "function") return structuredClone(model);
   return JSON.parse(JSON.stringify(model)) as BlogModel;
+}
+
+function currentTimestamp(): number {
+  return Date.now();
 }
 
 function readStoredAuthUser(): string | null {
@@ -154,7 +162,8 @@ export default function App() {
   const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
   const localAheadOfRemote =
     Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
-  const remoteStatus = useMemo(() => {
+  const remoteStatus = (() => {
+    const pendingCount = currentSyncState?.pendingOperations?.length ?? 0;
     if (syncBusy === "push") {
       return {
         text: "Sincronizzazione remota in corso…",
@@ -181,8 +190,14 @@ export default function App() {
     }
     if (!currentSyncState?.remoteId) {
       return {
-        text: "Mai pubblicato in remoto",
+        text: pendingCount > 0 ? `Pubblicazione iniziale in coda · ${pendingCount} modifiche` : "Mai pubblicato in remoto",
         className: "text-ink-300",
+      };
+    }
+    if (pendingCount > 0) {
+      return {
+        text: `Pubblicazione automatica in coda · ${pendingCount} modifiche`,
+        className: "text-amber-300",
       };
     }
     if (localAheadOfRemote) {
@@ -197,9 +212,9 @@ export default function App() {
       }`,
       className: "text-mint",
     };
-  }, [currentSyncState?.remoteId, currentSyncState?.revision, remoteReady, lastRemoteSyncAt, localAheadOfRemote, syncBusy, syncError]);
+  })();
 
-  function buildProjectDocument(savedAt = Date.now()): ProjectDocument | null {
+  function buildProjectDocument(savedAt: number): ProjectDocument | null {
     if (!model || !currentProjectId) return null;
     const existing = savedProjects.find((p) => p.id === currentProjectId);
     return {
@@ -212,18 +227,54 @@ export default function App() {
     };
   }
 
-  function buildProjectSnapshot(savedAt = Date.now()): ProjectSnapshot | null {
+  function buildProjectSnapshot(savedAt: number): ProjectSnapshot | null {
     const project = buildProjectDocument(savedAt);
     if (!project) return null;
     return {
       project,
-      syncState: currentSyncState,
+      syncState: ensureSyncState(project, currentSyncState),
     };
   }
 
   function updateRemoteSettings(updates: Partial<RemoteStorageSettings>) {
     setRemoteSettings((current) => saveRemoteStorageSettings({ ...current, ...updates }));
     setSyncError(null);
+  }
+
+  function createSeedProject(project: ProjectDocument): ProjectDocument {
+    return cloneProjectDocument(project);
+  }
+
+  function ensureSyncState(project: ProjectDocument, syncState?: ProjectSyncState | null): ProjectSyncState {
+    return {
+      remoteId: syncState?.remoteId ?? null,
+      revision: syncState?.revision ?? null,
+      lastSyncedAt: syncState?.lastSyncedAt ?? null,
+      seedProject: syncState?.seedProject ? cloneProjectDocument(syncState.seedProject) : createSeedProject(project),
+      pendingOperations: [...(syncState?.pendingOperations ?? [])],
+    };
+  }
+
+  function enqueueOperations(operations: ProjectChangeOperation[], seedProject?: ProjectDocument | null) {
+    if (operations.length === 0) return;
+    setCurrentSyncState((current) => {
+      const fallbackProject = seedProject ?? buildProjectDocument(currentTimestamp());
+      if (!fallbackProject) return current;
+      const normalized = ensureSyncState(fallbackProject, current);
+      return {
+        ...normalized,
+        pendingOperations: [...(normalized.pendingOperations ?? []), ...operations],
+      };
+    });
+    setSyncError(null);
+  }
+
+  function clearPendingOperations(project: ProjectDocument, syncState?: ProjectSyncState | null): ProjectSyncState {
+    const normalized = ensureSyncState(project, syncState);
+    return {
+      ...normalized,
+      pendingOperations: [],
+    };
   }
 
   async function hydrateProjectOriginalHTML(project: ProjectDocument): Promise<ProjectDocument> {
@@ -265,7 +316,7 @@ export default function App() {
       sourceUrl,
       html,
       model: parsed,
-      fetchedAt: Date.now(),
+      fetchedAt: currentTimestamp(),
     });
     return { sourceUrl, model: cloneBlogModel(parsed) };
   }
@@ -373,7 +424,7 @@ export default function App() {
     if (!model || !currentProjectId || !authUser) return;
     if (previewEditMode) return;
     const t = setTimeout(() => {
-      const now = Date.now();
+      const now = currentTimestamp();
       const project = buildProjectDocument(now);
       if (!project) {
         setError("Impossibile salvare il progetto corrente.");
@@ -394,6 +445,79 @@ export default function App() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, currentProjectId, previewEditMode, authUser]);
+
+  async function flushRemoteChanges(trigger: "manual" | "auto") {
+    if (!model || !currentProjectId || !authUser) return;
+    if (!remoteReady) {
+      if (trigger === "manual") {
+        setSyncError("Configura una credenziale di sessione prima di usare l'archivio remoto.");
+      }
+      return;
+    }
+    const now = currentTimestamp();
+    const project = buildProjectDocument(now);
+    if (!project) {
+      setSyncError("Impossibile preparare il progetto per la sincronizzazione remota.");
+      return;
+    }
+    const syncState = ensureSyncState(project, currentSyncState);
+    const pendingCount = syncState.pendingOperations?.length ?? 0;
+    if (trigger === "auto" && pendingCount === 0) return;
+    if (trigger === "manual" && pendingCount === 0 && syncState.remoteId) {
+      setSyncError(null);
+      return;
+    }
+    const localSnapshot: ProjectSnapshot = {
+      project,
+      syncState,
+    };
+
+    setSyncBusy("push");
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
+
+    try {
+      if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
+        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione remota.");
+      }
+      const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
+      await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
+      setCurrentSyncState(remote.snapshot.syncState ?? null);
+      setLastSavedAt(localSnapshot.project.savedAt);
+      if (trigger === "manual") setJustSaved(true);
+      await refreshSavedProjects(authUser);
+    } catch (e: unknown) {
+      if (e instanceof RemoteStorageConflictError) {
+        setSyncError(e.message);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSyncError(msg);
+      }
+    } finally {
+      setSyncBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!model || !currentProjectId || !authUser || !remoteReady) return;
+    if (previewEditMode || syncBusy !== null) return;
+    const pendingCount = currentSyncState?.pendingOperations?.length ?? 0;
+    if (pendingCount === 0) return;
+    const delay = pendingCount >= REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS ? 0 : REMOTE_AUTOSAVE_IDLE_MS;
+    const timeoutId = setTimeout(() => {
+      void flushRemoteChanges("auto");
+    }, delay);
+    return () => clearTimeout(timeoutId);
+  }, [
+    authUser,
+    currentProjectId,
+    currentSyncState?.pendingOperations,
+    flushRemoteChanges,
+    model,
+    previewEditMode,
+    remoteReady,
+    syncBusy,
+  ]);
 
   // Brief "Salvato!" confirmation flash on the Salva button
   useEffect(() => {
@@ -424,7 +548,7 @@ export default function App() {
     try {
       const { sourceUrl, model: parsed } = await resolveSourceModel(rawUrl);
       const id = newProjectId();
-      const now = Date.now();
+      const now = currentTimestamp();
       const project: ProjectDocument = {
         id,
         sourceUrl,
@@ -433,9 +557,10 @@ export default function App() {
         savedAt: now,
         model: parsed,
       };
-      await projectRepository.saveProjectSnapshot(authUser, { project, syncState: null });
+      const syncState = ensureSyncState(project, null);
+      await projectRepository.saveProjectSnapshot(authUser, { project, syncState });
       setCurrentProjectId(id);
-      setCurrentSyncState(null);
+      setCurrentSyncState(syncState);
       setLastSavedAt(now);
       setSyncError(null);
       setPendingRemoteRefresh(false);
@@ -467,7 +592,7 @@ export default function App() {
     const hydratedProject = await hydrateProjectOriginalHTML(snapshot.project);
     setCurrentProjectId(hydratedProject.id);
     setUrl(hydratedProject.sourceUrl);
-    setCurrentSyncState(snapshot.syncState ?? null);
+    setCurrentSyncState(ensureSyncState(hydratedProject, snapshot.syncState));
     setLastSavedAt(hydratedProject.savedAt);
     setSyncError(null);
     setPendingRemoteRefresh(false);
@@ -493,23 +618,19 @@ export default function App() {
   async function reloadFromOriginal() {
     if (!model || !currentProjectId) return;
     if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
-    setLoading(true);
-    try {
-      const { sourceUrl, model: parsed } = await resolveSourceModel(model.baseHref);
-      adoptModel(parsed);
-      setUrl(sourceUrl);
-      // Auto-save will persist the refreshed model into the same project id
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg + " — prova a cambiare CORS proxy.");
-    } finally {
-      setLoading(false);
-    }
+    const project = buildProjectDocument(currentTimestamp());
+    const seedProject = currentSyncState?.seedProject ?? project;
+    if (!seedProject) return;
+    const resetProject = cloneProjectDocument(seedProject);
+    enqueueOperations([{ type: "reset-project" }], seedProject);
+    adoptModel(cloneBlogModel(resetProject.model));
+    setUrl(resetProject.sourceUrl);
+    setEditing(null);
   }
 
   async function saveNow() {
     if (!model || !currentProjectId || !authUser) return;
-    const now = Date.now();
+    const now = currentTimestamp();
     const snapshot = buildProjectSnapshot(now);
     if (snapshot && (await projectRepository.saveProjectSnapshot(authUser, snapshot))) {
       setLastSavedAt(snapshot.project.savedAt);
@@ -519,48 +640,13 @@ export default function App() {
   }
 
   async function syncNowToRemote() {
-    if (!model || !currentProjectId || !authUser) return;
-    if (!remoteReady) {
-      setSyncError("Configura una chiave di accesso prima di pubblicare nell'archivio remoto.");
-      return;
-    }
-    const now = Date.now();
-    const localSnapshot = buildProjectSnapshot(now);
-    if (!localSnapshot) {
-      setSyncError("Impossibile preparare il progetto per la sincronizzazione remota.");
-      return;
-    }
-
-    setSyncBusy("push");
-    setSyncError(null);
-    setPendingRemoteRefresh(false);
-
-    try {
-      if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
-      throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione remota.");
-      }
-    const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
-      await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
-      setCurrentSyncState(remote.snapshot.syncState ?? null);
-      setLastSavedAt(localSnapshot.project.savedAt);
-      setJustSaved(true);
-      await refreshSavedProjects(authUser);
-    } catch (e: unknown) {
-    if (e instanceof RemoteStorageConflictError) {
-        setSyncError(e.message);
-      } else {
-        const msg = e instanceof Error ? e.message : String(e);
-        setSyncError(msg);
-      }
-    } finally {
-      setSyncBusy(null);
-    }
+    await flushRemoteChanges("manual");
   }
 
   async function executeRefreshFromRemote() {
     if (!currentProjectId || !authUser) return;
     if (!remoteReady) {
-      setSyncError("Configura una chiave di accesso prima di usare l'archivio remoto.");
+      setSyncError("Configura una credenziale di sessione prima di usare l'archivio remoto.");
       return;
     }
 
@@ -579,7 +665,7 @@ export default function App() {
       const hydratedProject = await hydrateProjectOriginalHTML(remote.snapshot.project);
       const nextSnapshot: ProjectSnapshot = {
         project: hydratedProject,
-        syncState: remote.snapshot.syncState,
+        syncState: clearPendingOperations(hydratedProject, remote.snapshot.syncState),
       };
       if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
         throw new Error("Impossibile salvare nel browser la versione ricevuta dall'archivio remoto.");
@@ -637,7 +723,7 @@ export default function App() {
 
   function exportCurrent() {
     if (!model || !currentProjectId || !authUser) return;
-    const existingSavedAt = savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? Date.now();
+    const existingSavedAt = savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? currentTimestamp();
     const project = buildProjectDocument(existingSavedAt);
     if (!project) return;
     const snapshot: ProjectSnapshot = { project, syncState: currentSyncState };
@@ -653,7 +739,7 @@ export default function App() {
       // Open the imported project immediately
       setCurrentProjectId(project.id);
       setUrl(project.sourceUrl);
-      setCurrentSyncState(snapshot.syncState ?? null);
+      setCurrentSyncState(ensureSyncState(project, snapshot.syncState));
       setLastSavedAt(project.savedAt);
       setSyncError(null);
       setPendingRemoteRefresh(false);
@@ -683,6 +769,11 @@ export default function App() {
     setPreviewEditMode(true);
   }
   function commitPreviewEdit() {
+    const before = editModeSnapshotRef.current;
+    const currentProject = buildProjectDocument(currentTimestamp());
+    if (before && model) {
+      enqueueOperations(diffPreviewEdits(before, model), currentProject);
+    }
     editModeSnapshotRef.current = null;
     setPreviewEditMode(false);
   }
@@ -769,13 +860,25 @@ export default function App() {
       const oldIndex = model.macros.findIndex((m) => m.id === activeId);
       const newIndex = model.macros.findIndex((m) => m.id === overId);
       if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+      const reordered = arrayMove(model.macros, oldIndex, newIndex);
       setModel((m) => (m ? { ...m, macros: arrayMove(m.macros, oldIndex, newIndex) } : m));
+      enqueueOperations(
+        [{ type: "reorder-macros", macroIds: reordered.map((macro) => macro.id) }],
+        buildProjectDocument(currentTimestamp())
+      );
       return;
     }
 
     if (activeData?.type === "item") {
       const container = findContainer(overId) || activeData.macroId;
       if (!container) return;
+      const macro = model.macros.find((entry) => entry.id === container);
+      if (!macro) return;
+      const items = macro.items;
+      const from = items.findIndex((item) => item.id === activeId);
+      if (from < 0) return;
+      const overIsItem = items.some((item) => item.id === overId);
+      const to = overIsItem ? items.findIndex((item) => item.id === overId) : items.length - 1;
       setModel((m) => {
         if (!m) return m;
         const next = cloneModel(m);
@@ -788,11 +891,16 @@ export default function App() {
         macro.items = arrayMove(items, from, to);
         return next;
       });
+      enqueueOperations(
+        [{ type: "move-item", itemId: activeId, toMacroId: container, toIndex: to }],
+        buildProjectDocument(currentTimestamp())
+      );
     }
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────
   function deleteItem(macroId: string, itemId: string) {
+    const seedProject = buildProjectDocument(currentTimestamp());
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -801,6 +909,7 @@ export default function App() {
       macro.items = macro.items.filter((i) => i.id !== itemId);
       return next;
     });
+    enqueueOperations([{ type: "delete-item", macroId, itemId }], seedProject);
   }
   function renameItem(macroId: string, itemId: string) {
     setEditing({ kind: "item", macroId, itemId });
@@ -811,6 +920,8 @@ export default function App() {
 
   function applyEdit(updates: { title: string; bodyHTML: string }) {
     if (!editing) return;
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const operations: ProjectChangeOperation[] = [];
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -828,6 +939,12 @@ export default function App() {
         itemN.snippet = (tmp.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220);
         const firstImg = tmp.querySelector("img");
         itemN.imageUrl = firstImg?.getAttribute("src") || undefined;
+        operations.push({
+          type: "update-item",
+          itemId: itemN.id,
+          title: updates.title,
+          bodyHTML: updates.bodyHTML,
+        });
       } else {
         const macroN = next.macros.find((x) => x.id === editing.macroId);
         if (!macroN) return m;
@@ -836,9 +953,16 @@ export default function App() {
           updates.title
         )}</h1>`;
         macroN.introHTML = updates.bodyHTML;
+        operations.push({
+          type: "update-macro",
+          macroId: macroN.id,
+          title: updates.title,
+          introHTML: updates.bodyHTML,
+        });
       }
       return next;
     });
+    enqueueOperations(operations, seedProject);
     setEditing(null);
   }
 
@@ -865,6 +989,9 @@ export default function App() {
   }, [editing, model]);
   function addItem(macroId: string) {
     const it = newItem("Nuova news");
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const currentMacro = model?.macros.find((entry) => entry.id === macroId);
+    const index = currentMacro?.items.length ?? 0;
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -872,23 +999,61 @@ export default function App() {
       macro.items.push(it);
       return next;
     });
+    enqueueOperations([{ type: "add-item", macroId, item: JSON.parse(JSON.stringify(it)) as NewsItem, index }], seedProject);
     // Open the editor immediately so user can add title, body, image, sources
     setEditing({ kind: "item", macroId, itemId: it.id });
   }
   function deleteMacro(macroId: string) {
     if (!window.confirm("Eliminare l'intera macro-sezione?")) return;
+    const seedProject = buildProjectDocument(currentTimestamp());
     setModel((m) => {
       if (!m) return m;
       return { ...m, macros: m.macros.filter((x) => x.id !== macroId) };
     });
+    enqueueOperations([{ type: "delete-macro", macroId }], seedProject);
   }
   function addMacro() {
     const mac = newMacro("Nuova macro-sezione");
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const index = model?.macros.length ?? 0;
     setModel((m) => (m ? { ...m, macros: [...m.macros, mac] } : m));
+    enqueueOperations([{ type: "add-macro", macro: JSON.parse(JSON.stringify(mac)) as MacroSection, index }], seedProject);
     setEditing({ kind: "macro", macroId: mac.id });
   }
   function resetOrder() {
     reloadFromOriginal();
+  }
+
+  function diffPreviewEdits(before: BlogModel, after: BlogModel): ProjectChangeOperation[] {
+    const operations: ProjectChangeOperation[] = [];
+    if (before.header.title !== after.header.title) {
+      operations.push({ type: "set-post-title", title: after.header.title });
+    }
+    for (const afterMacro of after.macros) {
+      const beforeMacro = before.macros.find((macro) => macro.id === afterMacro.id);
+      if (!beforeMacro) continue;
+      if (beforeMacro.title !== afterMacro.title || beforeMacro.introHTML !== afterMacro.introHTML) {
+        operations.push({
+          type: "update-macro",
+          macroId: afterMacro.id,
+          ...(beforeMacro.title !== afterMacro.title ? { title: afterMacro.title } : {}),
+          ...(beforeMacro.introHTML !== afterMacro.introHTML ? { introHTML: afterMacro.introHTML } : {}),
+        });
+      }
+      for (const afterItem of afterMacro.items) {
+        const beforeItem = beforeMacro.items.find((item) => item.id === afterItem.id);
+        if (!beforeItem) continue;
+        if (beforeItem.title !== afterItem.title || beforeItem.bodyHTML !== afterItem.bodyHTML) {
+          operations.push({
+            type: "update-item",
+            itemId: afterItem.id,
+            ...(beforeItem.title !== afterItem.title ? { title: afterItem.title } : {}),
+            ...(beforeItem.bodyHTML !== afterItem.bodyHTML ? { bodyHTML: afterItem.bodyHTML } : {}),
+          });
+        }
+      }
+    }
+    return operations;
   }
 
   // ─── Login & Welcome routing ─────────────────────────────────────────────
@@ -989,11 +1154,11 @@ export default function App() {
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             title={
               remoteReady
-                ? "Pubblica lo stato corrente nell'archivio remoto"
-                : "Configura una chiave di accesso nella dashboard"
+                ? "Forza subito l'invio del batch corrente all'archivio remoto"
+                : "Configura una credenziale di sessione nella dashboard"
             }
           >
-            <Cloud size={13} /> Pubblica
+            <Cloud size={13} /> Invia ora
           </button>
           <button
             onClick={refreshFromRemote}
@@ -1089,7 +1254,7 @@ export default function App() {
                 <div>
                   <div className="font-medium">L'archivio remoto sostituirà le modifiche locali non ancora pubblicate.</div>
                   <div className="mt-1 text-amber-200">
-                    Se vuoi mantenere il lavoro corrente, usa prima “Pubblica”.
+                    Se vuoi mantenere il lavoro corrente, usa prima “Invia ora”.
                   </div>
                 </div>
               </div>
@@ -1207,12 +1372,12 @@ export default function App() {
             </summary>
             <div className="mt-3 grid gap-3 md:grid-cols-1">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Chiave accesso</span>
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Credenziale sessione</span>
                 <input
                   type="password"
                   value={remoteSettings.accessKey}
                   onChange={(e) => updateRemoteSettings({ accessKey: e.target.value })}
-                  placeholder="Inserisci la chiave di accesso"
+                  placeholder="Inserisci la credenziale di sessione"
                   className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
                 />
                 <span className="text-[11px] text-ink-300">
@@ -1221,7 +1386,7 @@ export default function App() {
               </label>
             </div>
             <div className="mt-2 text-[11px] text-ink-300">
-              Il browser salva automaticamente la copia locale; la pubblicazione remota resta esplicita e controllata.
+              Il browser salva automaticamente la copia locale; la sincronizzazione remota invia batch atomici dopo una breve attesa o quando il volume di modifiche cresce.
             </div>
           </details>
         </section>
@@ -1362,7 +1527,7 @@ export default function App() {
               disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Cloud size={13} /> Pubblica
+              <Cloud size={13} /> Invia ora
             </button>
             <button
               onClick={() => {

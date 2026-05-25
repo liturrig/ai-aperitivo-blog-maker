@@ -1,4 +1,12 @@
-import { canonicalizeSourceUrl, type ProjectDocument, type ProjectSnapshot, type ProjectSyncState } from "./storage";
+import {
+  applyProjectOperations,
+  canonicalizeSourceUrl,
+  cloneProjectDocument,
+  type ProjectChangeOperation,
+  type ProjectDocument,
+  type ProjectSnapshot,
+  type ProjectSyncState,
+} from "./storage";
 
 const SETTINGS_STORAGE_KEY = "aisocratic:github-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:github-sync-token";
@@ -29,6 +37,13 @@ type GitHubSearchResponse = {
   items: GitHubIssue[];
 };
 
+type GitHubIssueComment = {
+  id: number;
+  body: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type IssueFrontmatter = {
   format: string;
   projectId: string;
@@ -45,6 +60,17 @@ type GitHubRemoteProject = {
   issueUrl: string;
   snapshot: ProjectSnapshot;
   foundExisting: boolean;
+};
+
+type RemoteCommentEvent = {
+  format: "aisocratic-sync-event-v1";
+  projectId: string;
+  revision: string;
+  previousRevision: string | null;
+  savedAt: number;
+  syncedAt: number;
+  userId: string;
+  operations: ProjectChangeOperation[];
 };
 
 export type GitHubSyncSettings = {
@@ -157,6 +183,8 @@ export async function syncProjectToGitHub(
   const normalizedSettings = requireGitHubSyncSettings(settings);
 
   const localProject = snapshot.project;
+  const seedProject = toRemoteProjectDocument(snapshot.syncState?.seedProject ?? localProject);
+  const pendingOperations = snapshot.syncState?.pendingOperations ?? [];
   const scope = buildRemoteScope(normalizedSettings.label, userId, localProject.sourceUrl);
   await ensureSyncLabelsExist(normalizedSettings, scope.labels);
   const existingIssue = await resolveProjectIssue(
@@ -167,24 +195,25 @@ export async function syncProjectToGitHub(
     snapshot.syncState?.remoteId ?? null
   );
   const parsedRemote = existingIssue ? parseRemoteIssue(existingIssue) : null;
+  const remoteEvents = existingIssue ? await listRemoteEvents(normalizedSettings, existingIssue.number) : [];
+  const remoteState = parsedRemote ? buildRemoteProjectState(parsedRemote, remoteEvents) : null;
 
-  if (existingIssue && parsedRemote && parsedRemote.frontmatter.revision !== (snapshot.syncState?.revision ?? null)) {
+  if (existingIssue && remoteState && remoteState.revision !== (snapshot.syncState?.revision ?? null)) {
     throw new GitHubSyncConflictError(
       "La revisione remota su GitHub è cambiata. Aggiorna il progetto da GitHub prima di sincronizzare di nuovo.",
-      toRemoteProject(existingIssue, parsedRemote.project, parsedRemote.frontmatter, true)
+      toRemoteProject(existingIssue, remoteState.project, remoteState.revision, remoteState.syncedAt, remoteState.seedProject, true)
     );
   }
 
   const syncedAt = Date.now();
-  const revision = createRevision();
-  const projectForRemote = toRemoteProjectDocument(localProject);
-  const issueBody = serializeIssueBody(projectForRemote, {
-    format: "aisocratic-github-sync-v1",
+  const revision = pendingOperations.length > 0 || !existingIssue ? createRevision() : snapshot.syncState?.revision ?? createRevision();
+  const issueBody = serializeIssueBody(seedProject, {
+    format: "aisocratic-github-sync-v2",
     projectId: localProject.id,
-    sourceUrl: canonicalizeSourceUrl(localProject.sourceUrl),
+    sourceUrl: canonicalizeSourceUrl(seedProject.sourceUrl),
     sourceSeed: scope.sourceSeed,
     revision,
-    savedAt: localProject.savedAt,
+    savedAt: seedProject.savedAt,
     syncedAt,
     userId,
   });
@@ -194,7 +223,6 @@ export async function syncProjectToGitHub(
         method: "PATCH",
         body: JSON.stringify({
           title: buildIssueTitle(localProject),
-          body: issueBody,
           labels: scope.labels,
         }),
       })
@@ -207,12 +235,29 @@ export async function syncProjectToGitHub(
         }),
       });
 
-  await createAuditComment(normalizedSettings, issue.number, localProject, revision, userId, Boolean(existingIssue));
+  if (pendingOperations.length > 0) {
+    await createEventComment(
+      normalizedSettings,
+      issue.number,
+      {
+        format: "aisocratic-sync-event-v1",
+        projectId: localProject.id,
+        revision,
+        previousRevision: remoteState?.revision ?? snapshot.syncState?.revision ?? null,
+        savedAt: localProject.savedAt,
+        syncedAt,
+        userId,
+        operations: pendingOperations,
+      }
+    );
+  }
 
   const syncState: ProjectSyncState = {
     remoteId: String(issue.number),
     revision,
     lastSyncedAt: syncedAt,
+    seedProject: snapshot.syncState?.seedProject ? cloneProjectDocument(snapshot.syncState.seedProject) : cloneProjectDocument(localProject),
+    pendingOperations: [],
   };
 
   return {
@@ -244,7 +289,9 @@ export async function refreshProjectFromGitHub(
     throw new Error("L'issue GitHub configurato appartiene a un progetto diverso.");
   }
 
-  return toRemoteProject(issue, parsedRemote.project, parsedRemote.frontmatter, true);
+  const remoteEvents = await listRemoteEvents(normalizedSettings, issue.number);
+  const remoteState = buildRemoteProjectState(parsedRemote, remoteEvents);
+  return toRemoteProject(issue, remoteState.project, remoteState.revision, remoteState.syncedAt, remoteState.seedProject, true);
 }
 
 function normalizeGitHubSyncSettings(settings: GitHubSyncSettings): GitHubSyncSettings {
@@ -319,26 +366,15 @@ async function findIssueByProjectId(
   return null;
 }
 
-async function createAuditComment(
+async function createEventComment(
   settings: GitHubSyncSettings,
   issueNumber: number,
-  project: ProjectDocument,
-  revision: string,
-  userId: string,
-  updated: boolean
+  event: RemoteCommentEvent
 ): Promise<void> {
   await requestGitHub(settings, issuePath(settings, issueNumber, "/comments"), {
     method: "POST",
     body: JSON.stringify({
-      body: [
-        updated ? "🔄 Project snapshot updated." : "🆕 Project snapshot created.",
-        "",
-        `- Revision: \`${revision}\``,
-        `- Project: ${escapeMarkdownText(project.title || project.sourceUrl)}`,
-        `- Source: ${escapeMarkdownText(project.sourceUrl)}`,
-        `- Saved locally at: ${new Date(project.savedAt).toISOString()}`,
-        `- Synced by: ${escapeMarkdownText(userId)}`,
-      ].join("\n"),
+      body: serializeEventComment(event),
     }),
   });
 }
@@ -374,6 +410,85 @@ async function requestGitHub<T>(
   return (await response.json()) as T;
 }
 
+async function listRemoteEvents(settings: GitHubSyncSettings, issueNumber: number): Promise<RemoteCommentEvent[]> {
+  const events: RemoteCommentEvent[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const comments = await requestGitHub<GitHubIssueComment[]>(
+      settings,
+      `${issuePath(settings, issueNumber, "/comments")}?per_page=100&page=${page}`
+    );
+    for (const comment of comments) {
+      const event = parseEventComment(comment.body ?? "");
+      if (event) events.push(event);
+    }
+    if (comments.length < 100) break;
+  }
+  return events;
+}
+
+function buildRemoteProjectState(
+  parsedRemote: { frontmatter: IssueFrontmatter; project: ProjectDocument },
+  events: RemoteCommentEvent[]
+): { seedProject: ProjectDocument; project: ProjectDocument; revision: string; syncedAt: number } {
+  const seedProject = cloneProjectDocument(parsedRemote.project);
+  if (events.length === 0) {
+    return {
+      seedProject,
+      project: cloneProjectDocument(parsedRemote.project),
+      revision: parsedRemote.frontmatter.revision,
+      syncedAt: parsedRemote.frontmatter.syncedAt,
+    };
+  }
+  const operations = events.flatMap((event) => event.operations);
+  const latest = events[events.length - 1];
+  return {
+    seedProject,
+    project: applyProjectOperations(seedProject, operations, latest.savedAt),
+    revision: latest.revision,
+    syncedAt: latest.syncedAt,
+  };
+}
+
+function serializeEventComment(event: RemoteCommentEvent): string {
+  return [
+    "<!-- aisocratic-sync-event-v1 -->",
+    `Revisione: \`${event.revision}\``,
+    "",
+    "```json",
+    JSON.stringify(event, null, 2),
+    "```",
+  ].join("\n");
+}
+
+function parseEventComment(body: string): RemoteCommentEvent | null {
+  if (!body.includes("aisocratic-sync-event-v1")) return null;
+  const match = body.match(/```json\n([\s\S]*?)\n```/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+    if (
+      parsed.format !== "aisocratic-sync-event-v1" ||
+      typeof parsed.projectId !== "string" ||
+      typeof parsed.revision !== "string" ||
+      !Array.isArray(parsed.operations)
+    ) {
+      return null;
+    }
+    return {
+      format: "aisocratic-sync-event-v1",
+      projectId: parsed.projectId,
+      revision: parsed.revision,
+      previousRevision: typeof parsed.previousRevision === "string" ? parsed.previousRevision : null,
+      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now(),
+      syncedAt: typeof parsed.syncedAt === "number" ? parsed.syncedAt : Date.now(),
+      userId: typeof parsed.userId === "string" ? parsed.userId : "",
+      operations: (parsed.operations as ProjectChangeOperation[]).filter(Boolean),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; project: ProjectDocument } {
   const body = issue.body ?? "";
   const match = body.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
@@ -383,7 +498,7 @@ function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; 
 
   const frontmatter = parseFrontmatter(match[1]);
   if (
-    frontmatter.format !== "aisocratic-github-sync-v1" ||
+    !["aisocratic-github-sync-v1", "aisocratic-github-sync-v2"].includes(frontmatter.format) ||
     typeof frontmatter.projectId !== "string" ||
     typeof frontmatter.sourceUrl !== "string" ||
     typeof frontmatter.sourceSeed !== "string" ||
@@ -426,16 +541,16 @@ function parseFrontmatter(frontmatterBlock: string): IssueFrontmatter {
 function serializeIssueBody(project: ProjectDocument, frontmatter: IssueFrontmatter): string {
   return `---
 ${serializeFrontmatter(frontmatter)}---
-# AI Socratic project sync
+# AI Socratic project seed
 
-This issue stores the canonical shared snapshot for one browser project.
+This issue stores the source snapshot for one browser project. Incremental remote history is serialized in issue comments.
 
 - Project title: ${project.title || project.sourceUrl}
 - Source URL: ${project.sourceUrl}
-- Revision: \`${frontmatter.revision}\`
-- Last sync: ${new Date(frontmatter.syncedAt).toISOString()}
+- Seed revision: \`${frontmatter.revision}\`
+- Seed stored at: ${new Date(frontmatter.syncedAt).toISOString()}
 
-## Snapshot JSON
+## Seed JSON
 
 \`\`\`json
 ${JSON.stringify(project, null, 2)}
@@ -510,7 +625,9 @@ function toLocalProjectDocument(value: unknown, frontmatter: IssueFrontmatter): 
 function toRemoteProject(
   issue: GitHubIssue,
   project: ProjectDocument,
-  frontmatter: IssueFrontmatter,
+  revision: string,
+  syncedAt: number,
+  seedProject: ProjectDocument,
   foundExisting: boolean
 ): GitHubRemoteProject {
   return {
@@ -521,8 +638,10 @@ function toRemoteProject(
       project,
       syncState: {
         remoteId: String(issue.number),
-        revision: frontmatter.revision,
-        lastSyncedAt: frontmatter.syncedAt,
+        revision,
+        lastSyncedAt: syncedAt,
+        seedProject: cloneProjectDocument(seedProject),
+        pendingOperations: [],
       },
     },
   };
@@ -546,10 +665,6 @@ function repoPath(settings: Pick<GitHubSyncSettings, "owner" | "repo">, suffix =
 
 function issuePath(settings: Pick<GitHubSyncSettings, "owner" | "repo">, issueNumber: number, suffix = ""): string {
   return `${repoPath(settings, "/issues")}/${issueNumber}${suffix}`;
-}
-
-function escapeMarkdownText(value: string): string {
-  return value.replace(/([\\`*_{}[\]()#+\-.!|>])/g, "\\$1");
 }
 
 function truncateForIssueTitle(value: string, maxLength: number): string {

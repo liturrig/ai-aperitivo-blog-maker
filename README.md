@@ -19,7 +19,7 @@ npm run build
 ## How saving works
 
 - The working copy is auto-saved in the browser after a short debounce.
-- Publishing to shared storage is a separate, explicit action.
+- Shared storage sync batches local edits and publishes them automatically after a short idle window or when the pending change volume grows.
 - Refreshing from shared storage replaces the current local snapshot only after the revision check passes.
 
 ## Shared storage workflow
@@ -30,20 +30,21 @@ Each project keeps:
 - a remote revision
 - the last successful remote sync timestamp
 - user and source-seed scope metadata for remote filtering
+- a seed snapshot plus a queue of pending local operations
 
 Current workflow:
 
 1. Edit normally
 2. Let the browser autosave locally, or click **Salva**
-3. Click **Pubblica** to push the current snapshot to shared storage
-4. Click **Aggiorna remoto** to replace the local project with the latest published snapshot
+3. Let shared storage publish the current batch automatically, or click **Invia ora** to flush it immediately
+4. Click **Aggiorna remoto** to replace the local project with the latest reconstructed remote state
 
 ## Access
 
-- Remote publishing requires an access key entered from the dashboard or editor.
-- The access key is kept only for the current browser session.
+- Remote publishing requires a session credential entered from the dashboard or editor.
+- The credential is kept only for the current browser session.
 
 ## Notes
 
-- The current remote flow is still explicit publish/refresh.
-- Batched remote autosave is not enabled in this version.
+- The remote adapter stores one seed snapshot in the shared record and appends atomic operation batches in remote comments.
+- Refresh reconstructs the current remote project by replaying those comment batches on top of the stored seed snapshot.

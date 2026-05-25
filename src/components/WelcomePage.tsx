@@ -202,7 +202,7 @@ export function WelcomePage({
 
               {savedProjects.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-center text-ink-300 text-xs italic border border-dashed border-ink-600 rounded-lg p-8">
-                  I progetti vengono salvati automaticamente nel browser al primo edit. La pubblicazione remota resta separata e manuale.
+                  I progetti vengono salvati automaticamente nel browser al primo edit. La sincronizzazione condivisa parte a blocchi quando rileva modifiche locali.
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto scroll-thin pr-1">
@@ -249,19 +249,19 @@ export function WelcomePage({
                 <div>
                   <h2 className="font-semibold text-ink-100">Archivio condiviso</h2>
                   <p className="text-[11px] text-ink-300">
-                    La copia nel browser resta autosalvata; la copia condivisa viene aggiornata solo quando la pubblichi.
+                    La copia nel browser resta autosalvata; la copia condivisa viene aggiornata automaticamente a blocchi.
                   </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3">
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Chiave accesso</span>
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Credenziale sessione</span>
                   <input
                     type="password"
                     value={remoteSettings.accessKey}
                     onChange={(e) => onRemoteSettingsChange({ accessKey: e.target.value })}
-                    placeholder="Inserisci la chiave di accesso"
+                    placeholder="Inserisci la credenziale di sessione"
                     className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
                   />
                 </label>
@@ -274,9 +274,9 @@ export function WelcomePage({
                   }`}
                 >
                   <Cloud size={11} />
-                  {remoteConfigured ? "Archivio remoto pronto" : "Serve una chiave di accesso per pubblicare"}
+                  {remoteConfigured ? "Archivio remoto pronto" : "Serve una credenziale di sessione per attivare la sincronizzazione"}
                 </span>
-                <span>La chiave viene tenuta solo per la sessione corrente.</span>
+                <span>La credenziale viene tenuta solo per la sessione corrente.</span>
               </div>
             </div>
           </div>

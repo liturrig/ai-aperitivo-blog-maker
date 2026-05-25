@@ -1,4 +1,4 @@
-import type { BlogModel } from "./parser";
+import type { BlogModel, MacroSection, NewsItem } from "./parser";
 
 const DB_NAME = "aisocratic-blog-maker";
 const DB_VERSION = 1;
@@ -24,12 +24,26 @@ export type ProjectSyncState = {
   remoteId: string | null;
   revision: string | null;
   lastSyncedAt?: number | null;
+  seedProject?: ProjectDocument | null;
+  pendingOperations?: ProjectChangeOperation[] | null;
 };
 
 export type ProjectSnapshot = {
   project: ProjectDocument;
   syncState?: ProjectSyncState | null;
 };
+
+export type ProjectChangeOperation =
+  | { type: "set-post-title"; title: string }
+  | { type: "update-macro"; macroId: string; title?: string; introHTML?: string }
+  | { type: "reorder-macros"; macroIds: string[] }
+  | { type: "add-macro"; macro: MacroSection; index: number }
+  | { type: "delete-macro"; macroId: string }
+  | { type: "add-item"; macroId: string; item: NewsItem; index: number }
+  | { type: "delete-item"; macroId: string; itemId: string }
+  | { type: "update-item"; itemId: string; title?: string; bodyHTML?: string }
+  | { type: "move-item"; itemId: string; toMacroId: string; toIndex: number }
+  | { type: "reset-project" };
 
 export type CachedSource = {
   sourceUrl: string;
@@ -243,6 +257,27 @@ export function newProjectId(): string {
   return "p_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+export function cloneProjectDocument(project: ProjectDocument): ProjectDocument {
+  if (typeof structuredClone === "function") return structuredClone(project);
+  return JSON.parse(JSON.stringify(project)) as ProjectDocument;
+}
+
+export function applyProjectOperations(
+  seedProject: ProjectDocument,
+  operations: ProjectChangeOperation[],
+  savedAt = seedProject.savedAt
+): ProjectDocument {
+  let current = cloneProjectDocument(seedProject);
+  for (const operation of operations) {
+    current = applyProjectOperation(current, operation, seedProject);
+  }
+  return normalizeProject({
+    ...current,
+    savedAt,
+    title: current.model.header?.title || current.title || current.sourceUrl,
+  });
+}
+
 export function normalizeUserId(userId: string): string {
   return userId.trim().toLowerCase();
 }
@@ -332,6 +367,8 @@ function normalizeSyncState(syncState?: ProjectSyncState | null): ProjectSyncSta
     remoteId: typeof syncState.remoteId === "string" ? syncState.remoteId : null,
     revision: typeof syncState.revision === "string" ? syncState.revision : null,
     lastSyncedAt: typeof syncState.lastSyncedAt === "number" ? syncState.lastSyncedAt : null,
+    seedProject: normalizeSeedProject(syncState.seedProject),
+    pendingOperations: normalizeProjectChangeOperations(syncState.pendingOperations),
   };
 }
 
@@ -460,6 +497,220 @@ function isProjectDocument(value: unknown): value is ProjectDocument {
 
 function convertIssueNumberToRemoteId(issueNumber: unknown): string | null {
   return typeof issueNumber === "number" ? String(issueNumber) : null;
+}
+
+function normalizeSeedProject(seedProject: unknown): ProjectDocument | null {
+  return isProjectDocument(seedProject) ? normalizeProject(seedProject) : null;
+}
+
+function normalizeProjectChangeOperations(value: unknown): ProjectChangeOperation[] | null {
+  if (!Array.isArray(value)) return null;
+  const operations = value
+    .map((operation) => normalizeProjectChangeOperation(operation))
+    .filter((operation): operation is ProjectChangeOperation => operation !== null);
+  return operations.length ? operations : [];
+}
+
+function normalizeProjectChangeOperation(value: unknown): ProjectChangeOperation | null {
+  if (!value || typeof value !== "object" || typeof (value as { type?: unknown }).type !== "string") return null;
+  const candidate = value as Record<string, unknown> & { type: ProjectChangeOperation["type"] };
+  switch (candidate.type) {
+    case "set-post-title":
+      return typeof candidate.title === "string" ? { type: candidate.type, title: candidate.title } : null;
+    case "update-macro":
+      return typeof candidate.macroId === "string" &&
+        (typeof candidate.title === "string" || typeof candidate.introHTML === "string")
+        ? {
+            type: candidate.type,
+            macroId: candidate.macroId,
+            ...(typeof candidate.title === "string" ? { title: candidate.title } : {}),
+            ...(typeof candidate.introHTML === "string" ? { introHTML: candidate.introHTML } : {}),
+          }
+        : null;
+    case "reorder-macros":
+      return Array.isArray(candidate.macroIds) && candidate.macroIds.every((id) => typeof id === "string")
+        ? { type: candidate.type, macroIds: [...candidate.macroIds] }
+        : null;
+    case "add-macro":
+      return isMacroSection(candidate.macro) && typeof candidate.index === "number"
+        ? { type: candidate.type, macro: cloneMacroSection(candidate.macro), index: candidate.index }
+        : null;
+    case "delete-macro":
+      return typeof candidate.macroId === "string" ? { type: candidate.type, macroId: candidate.macroId } : null;
+    case "add-item":
+      return isNewsItem(candidate.item) && typeof candidate.macroId === "string" && typeof candidate.index === "number"
+        ? { type: candidate.type, macroId: candidate.macroId, item: cloneNewsItem(candidate.item), index: candidate.index }
+        : null;
+    case "delete-item":
+      return typeof candidate.macroId === "string" && typeof candidate.itemId === "string"
+        ? { type: candidate.type, macroId: candidate.macroId, itemId: candidate.itemId }
+        : null;
+    case "update-item":
+      return typeof candidate.itemId === "string" &&
+        (typeof candidate.title === "string" || typeof candidate.bodyHTML === "string")
+        ? {
+            type: candidate.type,
+            itemId: candidate.itemId,
+            ...(typeof candidate.title === "string" ? { title: candidate.title } : {}),
+            ...(typeof candidate.bodyHTML === "string" ? { bodyHTML: candidate.bodyHTML } : {}),
+          }
+        : null;
+    case "move-item":
+      return typeof candidate.itemId === "string" &&
+        typeof candidate.toMacroId === "string" &&
+        typeof candidate.toIndex === "number"
+        ? { type: candidate.type, itemId: candidate.itemId, toMacroId: candidate.toMacroId, toIndex: candidate.toIndex }
+        : null;
+    case "reset-project":
+      return { type: candidate.type };
+    default:
+      return null;
+  }
+}
+
+function applyProjectOperation(
+  project: ProjectDocument,
+  operation: ProjectChangeOperation,
+  seedProject: ProjectDocument
+): ProjectDocument {
+  if (operation.type === "reset-project") {
+    return cloneProjectDocument(seedProject);
+  }
+
+  const next = cloneProjectDocument(project);
+  switch (operation.type) {
+    case "set-post-title":
+      next.model.header.title = operation.title;
+      next.title = operation.title || next.sourceUrl;
+      return next;
+    case "update-macro": {
+      const macro = next.model.macros.find((item) => item.id === operation.macroId);
+      if (!macro) return project;
+      if (typeof operation.title === "string") {
+        macro.title = operation.title;
+        macro.headingHTML = `<h1 id="${macro.id}" class="macro-heading">${escapeHTML(operation.title)}</h1>`;
+      }
+      if (typeof operation.introHTML === "string") macro.introHTML = operation.introHTML;
+      return next;
+    }
+    case "reorder-macros": {
+      const order = new Map(operation.macroIds.map((id, index) => [id, index]));
+      next.model.macros = [...next.model.macros].sort((a, b) => {
+        const left = order.get(a.id);
+        const right = order.get(b.id);
+        if (left === undefined && right === undefined) return 0;
+        if (left === undefined) return 1;
+        if (right === undefined) return -1;
+        return left - right;
+      });
+      return next;
+    }
+    case "add-macro": {
+      const index = clampIndex(operation.index, next.model.macros.length + 1);
+      next.model.macros.splice(index, 0, cloneMacroSection(operation.macro));
+      return next;
+    }
+    case "delete-macro":
+      next.model.macros = next.model.macros.filter((macro) => macro.id !== operation.macroId);
+      return next;
+    case "add-item": {
+      const macro = next.model.macros.find((item) => item.id === operation.macroId);
+      if (!macro) return project;
+      const index = clampIndex(operation.index, macro.items.length + 1);
+      macro.items.splice(index, 0, cloneNewsItem(operation.item));
+      return next;
+    }
+    case "delete-item": {
+      const macro = next.model.macros.find((item) => item.id === operation.macroId);
+      if (!macro) return project;
+      macro.items = macro.items.filter((item) => item.id !== operation.itemId);
+      return next;
+    }
+    case "update-item": {
+      const item = findNewsItem(next, operation.itemId);
+      if (!item) return project;
+      if (typeof operation.title === "string") {
+        item.title = operation.title;
+        item.headingHTML = `<h${item.level} id="${item.id}" class="news-heading">${escapeHTML(operation.title)}</h${item.level}>`;
+      }
+      if (typeof operation.bodyHTML === "string") {
+        item.bodyHTML = operation.bodyHTML;
+        updateDerivedItemFields(item);
+      }
+      return next;
+    }
+    case "move-item": {
+      const located = takeNewsItem(next, operation.itemId);
+      if (!located) return project;
+      const targetMacro = next.model.macros.find((item) => item.id === operation.toMacroId);
+      if (!targetMacro) return project;
+      const index = clampIndex(operation.toIndex, targetMacro.items.length + 1);
+      targetMacro.items.splice(index, 0, located.item);
+      return next;
+    }
+  }
+}
+
+function isMacroSection(value: unknown): value is MacroSection {
+  return !!value && typeof value === "object" && "id" in value && "items" in value;
+}
+
+function isNewsItem(value: unknown): value is NewsItem {
+  return !!value && typeof value === "object" && "id" in value && "bodyHTML" in value;
+}
+
+function cloneMacroSection(macro: MacroSection): MacroSection {
+  if (typeof structuredClone === "function") return structuredClone(macro);
+  return JSON.parse(JSON.stringify(macro)) as MacroSection;
+}
+
+function cloneNewsItem(item: NewsItem): NewsItem {
+  if (typeof structuredClone === "function") return structuredClone(item);
+  return JSON.parse(JSON.stringify(item)) as NewsItem;
+}
+
+function findNewsItem(project: ProjectDocument, itemId: string): NewsItem | null {
+  for (const macro of project.model.macros) {
+    const item = macro.items.find((entry) => entry.id === itemId);
+    if (item) return item;
+  }
+  return null;
+}
+
+function takeNewsItem(project: ProjectDocument, itemId: string): { item: NewsItem; macroId: string } | null {
+  for (const macro of project.model.macros) {
+    const index = macro.items.findIndex((entry) => entry.id === itemId);
+    if (index >= 0) {
+      const [item] = macro.items.splice(index, 1);
+      return { item, macroId: macro.id };
+    }
+  }
+  return null;
+}
+
+function clampIndex(index: number, length: number): number {
+  return Math.max(0, Math.min(length - 1, Math.trunc(index)));
+}
+
+function updateDerivedItemFields(item: NewsItem): void {
+  if (typeof document === "undefined") {
+    item.snippet = item.snippet || "";
+    return;
+  }
+  const tmp = document.createElement("div");
+  tmp.innerHTML = item.bodyHTML;
+  item.snippet = (tmp.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220);
+  const firstImg = tmp.querySelector("img");
+  item.imageUrl = firstImg?.getAttribute("src") || undefined;
+}
+
+function escapeHTML(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function isCachedSource(value: unknown): value is CachedSource {
