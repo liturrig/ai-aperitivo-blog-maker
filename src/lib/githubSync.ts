@@ -5,6 +5,10 @@ const TOKEN_STORAGE_KEY = "aisocratic:github-sync-token";
 const MAX_ISSUE_TITLE_LENGTH = 240;
 const MAX_GITHUB_LABEL_VALUE_LENGTH = 40;
 const GITHUB_LABEL_HASH_LENGTH = 6;
+const PRIMARY_LABEL_COLOR = "7c5cff";
+const SCOPE_LABEL_COLOR = "5fffce";
+const PRIMARY_LABEL_DESCRIPTION = "Canonical AI Socratic project snapshots";
+const SCOPE_LABEL_DESCRIPTION = "Scoped AI Socratic sync label";
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -575,8 +579,8 @@ async function ensureSyncLabelExists(settings: GitHubSyncSettings, label: string
         method: "POST",
         body: JSON.stringify({
           name: label,
-          color: label === settings.label ? "7c5cff" : "5fffce",
-          description: label === settings.label ? "Canonical AI Socratic project snapshots" : "Scoped AI Socratic sync label",
+          color: label === settings.label ? PRIMARY_LABEL_COLOR : SCOPE_LABEL_COLOR,
+          description: label === settings.label ? PRIMARY_LABEL_DESCRIPTION : SCOPE_LABEL_DESCRIPTION,
         }),
       });
     } catch (createError) {
@@ -607,6 +611,9 @@ function buildSourceSeed(sourceUrl: string): string {
   }
 }
 
+/** Normalizes dynamic scope values into GitHub-label-safe slugs.
+ *  When truncation is needed, keeps a readable prefix plus a fixed-width hash suffix
+ *  so long values remain stable and are less likely to collide. */
 function normalizeLabelValue(value: string): string {
   const compact = value
     .trim()
@@ -620,6 +627,7 @@ function normalizeLabelValue(value: string): string {
   return `${compact.slice(0, prefixLength)}-${hash}`;
 }
 
+/** Small fixed-width FNV-1a hash used only to disambiguate truncated label values. */
 function hashLabelValue(value: string): string {
   let hash = 2166136261;
   for (const char of value) {
