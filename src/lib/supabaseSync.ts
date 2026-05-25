@@ -363,7 +363,7 @@ async function upsertProjectRecord(
 
 async function insertEventRows(settings: SupabaseSyncSettings, rows: SupabaseEventRow[]): Promise<void> {
   if (rows.length === 0) return;
-  await requestSupabaseJson(settings, `/rest/v1/${settings.eventsTable}`, {
+  await requestSupabase(settings, `/rest/v1/${settings.eventsTable}`, {
     method: "POST",
     headers: {
       Prefer: "return=minimal",
@@ -423,7 +423,6 @@ async function downloadSeedObject(settings: SupabaseSyncSettings, objectPath: st
 
 async function requestSupabaseJson<T>(settings: SupabaseSyncSettings, path: string, init: RequestInit = {}): Promise<T> {
   const response = await requestSupabase(settings, path, init);
-  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 

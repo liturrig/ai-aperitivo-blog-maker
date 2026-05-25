@@ -34,9 +34,12 @@ export type RemoteStorageSettings = {
 };
 
 export class RemoteStorageConflictError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  declare cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
     this.name = "RemoteStorageConflictError";
+    if (cause !== undefined) this.cause = cause;
   }
 }
 
@@ -174,7 +177,7 @@ function toSupabaseProviderSettings(settings: RemoteStorageSettings): SupabaseSy
 function normalizeRemoteError(error: unknown): Error {
   if (error instanceof RemoteStorageConflictError) return error;
   if (error instanceof GitHubSyncConflictError || error instanceof SupabaseSyncConflictError) {
-    return new RemoteStorageConflictError(error.message, { cause: error });
+    return new RemoteStorageConflictError(error.message, error);
   }
   return error instanceof Error ? error : new Error(String(error));
 }
