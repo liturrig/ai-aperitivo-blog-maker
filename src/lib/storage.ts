@@ -262,8 +262,14 @@ export function cloneProjectDocument(project: ProjectDocument): ProjectDocument 
   return JSON.parse(JSON.stringify(project)) as ProjectDocument;
 }
 
-/** Replays a sequence of generic project operations on top of a stable seed snapshot
- *  and returns the reconstructed project document at the requested save timestamp. */
+/**
+ * Replays a sequence of generic project operations on top of a stable seed snapshot.
+ *
+ * @param seedProject provider-agnostic base project used as the reconstruction seed
+ * @param operations ordered atomic operations to apply on top of the seed snapshot
+ * @param savedAt optional timestamp for the reconstructed project; defaults to the seed timestamp
+ * @returns the reconstructed project document after all operations have been applied
+ */
 export function applyProjectOperations(
   seedProject: ProjectDocument,
   operations: ProjectChangeOperation[],
@@ -582,7 +588,7 @@ function applyProjectOperation(
   const next = cloneProjectDocument(project);
   switch (operation.type) {
     case "set-post-title":
-      next.model.header.title = operation.title;
+      if (next.model.header) next.model.header.title = operation.title;
       next.title = operation.title || next.sourceUrl;
       return next;
     case "update-macro": {

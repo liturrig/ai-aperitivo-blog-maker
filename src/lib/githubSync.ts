@@ -19,6 +19,9 @@ const SCOPE_LABEL_COLOR = "5fffce";
 const PRIMARY_LABEL_DESCRIPTION = "Canonical AI Socratic project snapshots";
 const SCOPE_LABEL_DESCRIPTION = "Scoped AI Socratic sync label";
 const MAX_REMOTE_EVENT_COMMENT_PAGES = 10;
+const SNAPSHOT_FORMAT_V1 = "aisocratic-github-sync-v1";
+const SNAPSHOT_FORMAT_V2 = "aisocratic-github-sync-v2";
+const EVENT_FORMAT_V1 = "aisocratic-sync-event-v1";
 
 export const DEFAULT_GITHUB_OWNER = "liturrig";
 export const DEFAULT_GITHUB_REPO = "ai-aperitivo-blog-maker";
@@ -65,7 +68,7 @@ type GitHubRemoteProject = {
 };
 
 type RemoteCommentEvent = {
-  format: "aisocratic-sync-event-v1";
+  format: typeof EVENT_FORMAT_V1;
   projectId: string;
   revision: string;
   previousRevision: string | null;
@@ -211,7 +214,7 @@ export async function syncProjectToGitHub(
   const syncedAt = Date.now();
   const revision = pendingOperations.length > 0 || !existingIssue ? createRevision() : snapshot.syncState?.revision ?? createRevision();
   const issueBody = serializeIssueBody(seedProject, {
-    format: "aisocratic-github-sync-v2",
+    format: SNAPSHOT_FORMAT_V2,
     projectId: localProject.id,
     sourceUrl: canonicalizeSourceUrl(seedProject.sourceUrl),
     sourceSeed: scope.sourceSeed,
@@ -246,7 +249,7 @@ export async function syncProjectToGitHub(
       normalizedSettings,
       issue.number,
       {
-        format: "aisocratic-sync-event-v1",
+        format: EVENT_FORMAT_V1,
         projectId: localProject.id,
         revision,
         previousRevision: remoteState?.revision ?? snapshot.syncState?.revision ?? null,
@@ -457,7 +460,7 @@ function buildRemoteProjectState(
 
 function serializeEventComment(event: RemoteCommentEvent): string {
   return [
-    "<!-- aisocratic-sync-event-v1 -->",
+    `<!-- ${EVENT_FORMAT_V1} -->`,
     `Revisione: \`${event.revision}\``,
     "",
     "```json",
@@ -467,13 +470,13 @@ function serializeEventComment(event: RemoteCommentEvent): string {
 }
 
 function parseEventComment(body: string): RemoteCommentEvent | null {
-  if (!body.includes("aisocratic-sync-event-v1")) return null;
+  if (!body.includes(EVENT_FORMAT_V1)) return null;
   const match = body.match(/```json\n([\s\S]*?)\n```/);
   if (!match) return null;
   try {
     const parsed = JSON.parse(match[1]) as Record<string, unknown>;
     if (
-      parsed.format !== "aisocratic-sync-event-v1" ||
+      parsed.format !== EVENT_FORMAT_V1 ||
       typeof parsed.projectId !== "string" ||
       typeof parsed.revision !== "string" ||
       !Array.isArray(parsed.operations)
@@ -481,7 +484,7 @@ function parseEventComment(body: string): RemoteCommentEvent | null {
       return null;
     }
     return {
-      format: "aisocratic-sync-event-v1",
+      format: EVENT_FORMAT_V1,
       projectId: parsed.projectId,
       revision: parsed.revision,
       previousRevision: typeof parsed.previousRevision === "string" ? parsed.previousRevision : null,
@@ -504,7 +507,7 @@ function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; 
 
   const frontmatter = parseFrontmatter(match[1]);
   if (
-    !["aisocratic-github-sync-v1", "aisocratic-github-sync-v2"].includes(frontmatter.format) ||
+    ![SNAPSHOT_FORMAT_V1, SNAPSHOT_FORMAT_V2].includes(frontmatter.format) ||
     typeof frontmatter.projectId !== "string" ||
     typeof frontmatter.sourceUrl !== "string" ||
     typeof frontmatter.sourceSeed !== "string" ||

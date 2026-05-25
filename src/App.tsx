@@ -629,8 +629,8 @@ export default function App() {
     if (!model || !currentProjectId) return;
     if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
     const project = buildProjectDocument(currentTimestamp());
+    if (!project) return;
     const seedProject = currentSyncState?.seedProject ?? project;
-    if (!seedProject) return;
     const resetProject = cloneProjectDocument(seedProject);
     enqueueOperations([{ type: "reset-project" }], seedProject);
     adoptModel(cloneBlogModel(resetProject.model));
