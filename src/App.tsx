@@ -124,6 +124,7 @@ export default function App() {
   const [githubSettings, setGitHubSettings] = useState<GitHubSyncSettings>(() => loadGitHubSyncSettings());
   const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [pendingRemoteRefresh, setPendingRemoteRefresh] = useState(false);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
@@ -435,6 +436,7 @@ export default function App() {
       setCurrentSyncState(null);
       setLastSavedAt(now);
       setSyncError(null);
+      setPendingRemoteRefresh(false);
       adoptModel(parsed);
       await refreshSavedProjects(authUser);
       setUrl(sourceUrl);
@@ -456,13 +458,17 @@ export default function App() {
   async function resumeProject(p: ProjectDocument) {
     if (!authUser) return;
     const snapshot = await projectRepository.loadProjectSnapshot(authUser, p.id);
-    if (!snapshot) return;
+    if (!snapshot) {
+      setError("Impossibile caricare il progetto salvato selezionato.");
+      return;
+    }
     const hydratedProject = await hydrateProjectOriginalHTML(snapshot.project);
     setCurrentProjectId(hydratedProject.id);
     setUrl(hydratedProject.sourceUrl);
     setCurrentSyncState(snapshot.syncState ?? null);
     setLastSavedAt(hydratedProject.savedAt);
     setSyncError(null);
+    setPendingRemoteRefresh(false);
     adoptModel(cloneBlogModel(hydratedProject.model));
   }
 
@@ -525,6 +531,7 @@ export default function App() {
 
     setSyncBusy("push");
     setSyncError(null);
+    setPendingRemoteRefresh(false);
 
     try {
       if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
@@ -548,21 +555,16 @@ export default function App() {
     }
   }
 
-  async function refreshFromGitHub() {
+  async function executeRefreshFromGitHub() {
     if (!currentProjectId || !authUser) return;
     if (!githubReady) {
       setSyncError("Configura owner, repository e token GitHub nella dashboard prima di usare GitHub.");
       return;
     }
-    if (localAheadOfRemote) {
-      const confirmed = window.confirm(
-        "Questo rimpiazzerà le modifiche locali non ancora sincronizzate con la versione remota su GitHub. Continuare?"
-      );
-      if (!confirmed) return;
-    }
 
     setSyncBusy("pull");
     setSyncError(null);
+    setPendingRemoteRefresh(false);
 
     try {
       const remote = await refreshProjectFromGitHub(
@@ -583,12 +585,21 @@ export default function App() {
       setUrl(nextSnapshot.project.sourceUrl);
       adoptModel(cloneBlogModel(nextSnapshot.project.model));
       await refreshSavedProjects(authUser);
+      setError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setSyncError(msg);
     } finally {
       setSyncBusy(null);
     }
+  }
+
+  function refreshFromGitHub() {
+    if (localAheadOfRemote) {
+      setPendingRemoteRefresh(true);
+      return;
+    }
+    void executeRefreshFromGitHub();
   }
 
   function handleLogin(username: string) {
@@ -614,6 +625,7 @@ export default function App() {
     setCurrentSyncState(null);
     setLastSavedAt(null);
     setSyncError(null);
+    setPendingRemoteRefresh(false);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
@@ -640,6 +652,7 @@ export default function App() {
       setCurrentSyncState(snapshot.syncState ?? null);
       setLastSavedAt(project.savedAt);
       setSyncError(null);
+      setPendingRemoteRefresh(false);
       adoptModel(cloneBlogModel(project.model));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -652,6 +665,7 @@ export default function App() {
     setCurrentSyncState(null);
     setLastSavedAt(null);
     setSyncError(null);
+    setPendingRemoteRefresh(false);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
@@ -1057,6 +1071,36 @@ export default function App() {
             <div className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
               <span>{syncError}</span>
+            </div>
+          )}
+          {pendingRemoteRefresh && (
+            <div
+              className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-100 text-sm"
+              role="alert"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-medium">GitHub sostituirà le modifiche locali non ancora sincronizzate.</div>
+                  <div className="mt-1 text-amber-200">
+                    Se vuoi mantenere il lavoro corrente, usa prima “Sync GitHub”.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setPendingRemoteRefresh(false)}
+                  className="px-3 py-2 rounded-lg border border-ink-600 hover:border-ink-500 text-xs transition"
+                >
+                  Annulla
+                </button>
+                <button
+                  onClick={() => void executeRefreshFromGitHub()}
+                  className="px-3 py-2 rounded-lg bg-amber-400 hover:brightness-110 text-ink-950 text-xs font-semibold transition"
+                >
+                  Sostituisci con GitHub
+                </button>
+              </div>
             </div>
           )}
 

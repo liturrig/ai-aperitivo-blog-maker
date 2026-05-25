@@ -249,15 +249,29 @@ async function ensureSyncLabelExists(settings: GitHubSyncSettings): Promise<void
   try {
     await requestGitHub(settings, repoPath(settings, `/labels/${encodeURIComponent(settings.label)}`));
   } catch (error) {
-    if (!(error instanceof GitHubApiError) || error.status !== 404) throw error;
-    await requestGitHub(settings, repoPath(settings, "/labels"), {
-      method: "POST",
-      body: JSON.stringify({
-        name: settings.label,
-        color: "7c5cff",
-        description: "Canonical AI Socratic project snapshots",
-      }),
-    });
+    if (!(error instanceof GitHubApiError)) {
+      throw new Error(`Impossibile verificare la label GitHub "${settings.label}".`, { cause: error });
+    }
+    if (error.status !== 404) {
+      throw new Error(`Impossibile verificare la label GitHub "${settings.label}": ${error.message}`, {
+        cause: error,
+      });
+    }
+    try {
+      await requestGitHub(settings, repoPath(settings, "/labels"), {
+        method: "POST",
+        body: JSON.stringify({
+          name: settings.label,
+          color: "7c5cff",
+          description: "Canonical AI Socratic project snapshots",
+        }),
+      });
+    } catch (createError) {
+      const message = createError instanceof Error ? createError.message : String(createError);
+      throw new Error(`Impossibile creare la label GitHub "${settings.label}": ${message}`, {
+        cause: createError,
+      });
+    }
   }
 }
 
