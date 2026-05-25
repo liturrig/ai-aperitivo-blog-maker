@@ -331,10 +331,10 @@ async function createAuditComment(
         updated ? "🔄 Project snapshot updated." : "🆕 Project snapshot created.",
         "",
         `- Revision: \`${revision}\``,
-        `- Project: ${project.title || project.sourceUrl}`,
-        `- Source: ${project.sourceUrl}`,
+        `- Project: ${escapeMarkdownText(project.title || project.sourceUrl)}`,
+        `- Source: ${escapeMarkdownText(project.sourceUrl)}`,
         `- Saved locally at: ${new Date(project.savedAt).toISOString()}`,
-        `- Synced by: ${userId}`,
+        `- Synced by: ${escapeMarkdownText(userId)}`,
       ].join("\n"),
     }),
   });
@@ -526,7 +526,9 @@ function toRemoteProject(
 
 function buildIssueTitle(project: ProjectDocument): string {
   const title = project.title || project.sourceUrl || "Untitled project";
-  return `[aisocratic:${project.id}] ${title}`.slice(0, 240);
+  return Array.from(`[aisocratic:${project.id}] ${title}`)
+    .slice(0, 240)
+    .join("");
 }
 
 function createRevision(): string {
@@ -542,4 +544,8 @@ function repoPath(settings: Pick<GitHubSyncSettings, "owner" | "repo">, suffix =
 
 function issuePath(settings: Pick<GitHubSyncSettings, "owner" | "repo">, issueNumber: number, suffix = ""): string {
   return `${repoPath(settings, "/issues")}/${issueNumber}${suffix}`;
+}
+
+function escapeMarkdownText(value: string): string {
+  return value.replace(/([\\`*_{}[\]()#+\-.!|>])/g, "\\$1");
 }

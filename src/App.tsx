@@ -899,7 +899,9 @@ export default function App() {
         loading={loading}
         initialURL={url}
         onLoadURL={(u) => startNewProject(u)}
-        onResume={(p) => resumeProject(p)}
+        onResume={(p) => {
+          void resumeProject(p);
+        }}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
         githubSettings={githubSettings}
