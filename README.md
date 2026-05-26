@@ -68,8 +68,6 @@ Setup:
 4. In the app, choose **Supabase**
 5. The app will preload those values locally; anything you type in the UI still overrides them for the current browser session
 
-This repo is a Vite client app, so the Next.js-specific `page.tsx`, server helper, and middleware snippets from Supabase docs do not apply here.
-
 For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
 
 If you prefer using the publishable/anon key, add the matching storage and table policies in Supabase first.

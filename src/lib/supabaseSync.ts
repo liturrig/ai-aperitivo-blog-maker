@@ -13,6 +13,7 @@ import {
 const SETTINGS_STORAGE_KEY = "aisocratic:supabase-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:supabase-sync-token";
 const MAX_PROJECT_TITLE_LENGTH = 240;
+const EXPLICIT_EMPTY_VALUE = "__aisocratic_explicit_empty__";
 const ENV_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim() ?? "";
 const ENV_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
 
@@ -91,7 +92,7 @@ class SupabaseApiError extends Error {
 
 export function loadSupabaseSyncSettings(): SupabaseSyncSettings {
   let persisted: PersistedSupabaseSyncSettings = {};
-  let accessKey = "";
+  let accessKey: string | null = null;
 
   if (typeof localStorage !== "undefined") {
     try {
@@ -104,14 +105,14 @@ export function loadSupabaseSyncSettings(): SupabaseSyncSettings {
 
   if (typeof sessionStorage !== "undefined") {
     try {
-      accessKey = sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
+      accessKey = decodeExplicitEmpty(sessionStorage.getItem(TOKEN_STORAGE_KEY));
     } catch {
       /* noop */
     }
   }
 
   return normalizeSupabaseSyncSettings({
-    projectUrl: withEnvFallback(persisted.projectUrl, ENV_SUPABASE_URL),
+    projectUrl: withEnvFallback(decodeExplicitEmpty(persisted.projectUrl), ENV_SUPABASE_URL),
     accessKey: withEnvFallback(accessKey, ENV_SUPABASE_PUBLISHABLE_KEY),
     bucket: typeof persisted.bucket === "string" ? persisted.bucket : DEFAULT_SUPABASE_OBJECT_BUCKET,
     projectsTable:
@@ -128,7 +129,7 @@ export function saveSupabaseSyncSettings(settings: SupabaseSyncSettings): Supaba
       localStorage.setItem(
         SETTINGS_STORAGE_KEY,
         JSON.stringify({
-          projectUrl: normalized.projectUrl,
+          projectUrl: encodeExplicitEmpty(normalized.projectUrl),
           bucket: normalized.bucket,
           projectsTable: normalized.projectsTable,
           eventsTable: normalized.eventsTable,
@@ -141,8 +142,7 @@ export function saveSupabaseSyncSettings(settings: SupabaseSyncSettings): Supaba
 
   if (typeof sessionStorage !== "undefined") {
     try {
-      if (normalized.accessKey) sessionStorage.setItem(TOKEN_STORAGE_KEY, normalized.accessKey);
-      else sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, encodeExplicitEmpty(normalized.accessKey));
     } catch {
       /* noop */
     }
@@ -306,10 +306,19 @@ function normalizeProjectUrl(projectUrl: string): string {
   return projectUrl.trim().replace(/\/+$/, "");
 }
 
-function withEnvFallback(value: string | undefined, fallback: string): string {
-  if (value === undefined) return fallback;
+function withEnvFallback(value: string | null | undefined, fallback: string): string {
+  if (value === null || value === undefined) return fallback;
   const trimmed = value.trim();
   return trimmed || fallback;
+}
+
+function encodeExplicitEmpty(value: string): string {
+  return value ? value : EXPLICIT_EMPTY_VALUE;
+}
+
+function decodeExplicitEmpty(value: string | undefined | null): string | null {
+  if (value === null || value === undefined) return null;
+  return value === EXPLICIT_EMPTY_VALUE ? "" : value;
 }
 
 async function resolveProjectRecord(
