@@ -308,12 +308,11 @@ function normalizeProjectUrl(projectUrl: string): string {
 
 function withEnvFallback(value: string | null | undefined, fallback: string): string {
   if (value === null || value === undefined) return fallback;
-  const trimmed = value.trim();
-  return trimmed || fallback;
+  return value === "" ? "" : value;
 }
 
 function encodeExplicitEmpty(value: string): string {
-  return value ? value : EXPLICIT_EMPTY_VALUE;
+  return value === "" ? EXPLICIT_EMPTY_VALUE : value;
 }
 
 function decodeExplicitEmpty(value: string | undefined | null): string | null {
