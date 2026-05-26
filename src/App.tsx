@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import {
   RotateCcw,
+  Newspaper,
   Plus,
   Maximize2,
   Minimize2,
@@ -555,7 +556,7 @@ export default function App() {
       } finally {
         backgroundSyncInFlightRef.current = false;
         if (!cancelled && changed) {
-          await refreshSavedProjects(authUser);
+          setSavedProjects(await projectRepository.listProjects(authUser));
         }
       }
     })();
@@ -1119,9 +1120,7 @@ export default function App() {
         }}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
-        remoteSettings={remoteSettings}
-        onRemoteSettingsChange={updateRemoteSettings}
-        remoteConfigured={remoteReady}
+        sharedSyncReady={remoteReady}
         onLogout={handleLogout}
       />
     );
@@ -1508,13 +1507,6 @@ export default function App() {
               <Cloud size={11} />
               {remoteStatus.text}
             </div>
-            {remoteRecordUrl && (
-              <a
-                href={remoteRecordUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
-              >
             <button
               onClick={() => {
                 setMobileActionsOpen(false);
