@@ -61,10 +61,10 @@ The Supabase implementation keeps:
 Setup:
 
 1. If you want to initialize the schema manually, open your Supabase SQL editor and run `supabase/remote-sync-schema.sql`
-3. Optionally copy `.env.example` to `.env.local` and prefill:
+2. Optionally copy `.env.example` to `.env.local` and prefill:
    - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY=<your publishable key>`
-4. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
+3. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
 
 For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
 
