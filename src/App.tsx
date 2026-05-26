@@ -241,6 +241,11 @@ export default function App() {
     return cloneProjectDocument(project);
   }
 
+  /**
+   * Saved projects should be backfilled when they have never reached cloud sync,
+   * still have queued operations, or the local snapshot is newer than the last
+   * successful cloud revision we know about.
+   */
   function shouldSyncSnapshotInBackground(snapshot: ProjectSnapshot): boolean {
     const pendingCount = snapshot.syncState?.pendingOperations?.length ?? 0;
     const lastSyncedAt = snapshot.syncState?.lastSyncedAt ?? null;
@@ -527,7 +532,8 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!authUser || !remoteReady || currentProjectId !== null || savedProjects.length === 0) return;
+    const userId = authUser;
+    if (!userId || !remoteReady || currentProjectId !== null || savedProjects.length === 0) return;
     if (backgroundSyncInFlightRef.current) return;
 
     let cancelled = false;
@@ -540,23 +546,23 @@ export default function App() {
         for (const project of savedProjects) {
           if (cancelled) return;
 
-          const snapshot = await projectRepository.loadProjectSnapshot(authUser, project.id);
+          const snapshot = await projectRepository.loadProjectSnapshot(userId, project.id);
           if (!snapshot || !shouldSyncSnapshotInBackground(snapshot)) continue;
 
           try {
-            const remote = await syncProjectToRemote(remoteSettings, authUser, snapshot);
+            const remote = await syncProjectToRemote(remoteSettings, userId, snapshot);
             if (cancelled) return;
-            if (await projectRepository.saveProjectSnapshot(authUser, remote.snapshot)) {
+            if (await projectRepository.saveProjectSnapshot(userId, remote.snapshot)) {
               changed = true;
             }
-          } catch {
-            /* noop */
+          } catch (error) {
+            console.warn("Background cloud sync skipped for saved project", project.id, error);
           }
         }
       } finally {
         backgroundSyncInFlightRef.current = false;
         if (!cancelled && changed) {
-          setSavedProjects(await projectRepository.listProjects(authUser));
+          setSavedProjects(await projectRepository.listProjects(userId));
         }
       }
     })();
