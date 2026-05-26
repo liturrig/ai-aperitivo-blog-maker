@@ -307,7 +307,7 @@ function normalizeProjectUrl(projectUrl: string): string {
 }
 
 function withEnvFallback(value: string | undefined, fallback: string): string {
-  if (typeof value !== "string") return fallback;
+  if (value === undefined) return fallback;
   const trimmed = value.trim();
   return trimmed || fallback;
 }
