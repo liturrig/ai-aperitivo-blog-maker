@@ -40,6 +40,7 @@ import { MacroGroup } from "./components/MacroGroup";
 import { NewsEditor } from "./components/NewsEditor";
 import { LoginPage } from "./components/LoginPage";
 import { WelcomePage } from "./components/WelcomePage";
+import { BrandLogo } from "./components/BrandLogo";
 import {
   buildPreviewHTML,
   fetchHTML,
@@ -67,11 +68,9 @@ import {
 } from "./lib/storage";
 import {
   RemoteStorageConflictError,
-  buildRemoteRecordUrl,
   isRemoteStorageReady,
   loadRemoteStorageSettings,
   refreshProjectFromRemote,
-  saveRemoteStorageSettings,
   syncProjectToRemote,
   type RemoteStorageSettings,
 } from "./lib/remoteSync";
@@ -133,7 +132,7 @@ export default function App() {
   const [justSaved, setJustSaved] = useState(false);
   const [savedProjects, setSavedProjects] = useState<ProjectDocument[]>([]);
   const [currentSyncState, setCurrentSyncState] = useState<ProjectSyncState | null>(null);
-  const [remoteSettings, setRemoteSettings] = useState<RemoteStorageSettings>(() => loadRemoteStorageSettings());
+  const remoteSettings = useMemo<RemoteStorageSettings>(() => loadRemoteStorageSettings(), []);
   const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingRemoteRefresh, setPendingRemoteRefresh] = useState(false);
@@ -141,6 +140,7 @@ export default function App() {
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
   const flushRemoteChangesRef = useRef<(trigger: "manual" | "auto") => Promise<void>>(async () => {});
+  const backgroundSyncInFlightRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -158,28 +158,22 @@ export default function App() {
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
   const remoteReady = isRemoteStorageReady(remoteSettings);
-  const remoteRecordUrl = useMemo(
-    () => buildRemoteRecordUrl(remoteSettings, currentSyncState?.remoteId ?? null),
-    [remoteSettings, currentSyncState?.remoteId]
-  );
   const pendingOperationCount = currentSyncState?.pendingOperations?.length ?? 0;
   const currentRemoteId = currentSyncState?.remoteId ?? null;
   const currentRevision = currentSyncState?.revision ?? null;
   const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
-  const remoteCredentialLabel = "Chiave di accesso archivio";
-  const remoteCredentialPlaceholder = "Inserisci la chiave di accesso dell'archivio condiviso";
   const localAheadOfRemote =
     Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
   const remoteStatus = useMemo(() => {
     if (syncBusy === "push") {
       return {
-        text: "Sincronizzazione remota in corso…",
+        text: "Sincronizzazione cloud in corso…",
         className: "text-brand-300",
       };
     }
     if (syncBusy === "pull") {
       return {
-        text: "Aggiornamento remoto in corso…",
+        text: "Aggiornamento cloud in corso…",
         className: "text-brand-300",
       };
     }
@@ -191,13 +185,13 @@ export default function App() {
     }
     if (!remoteReady) {
       return {
-        text: "Archivio remoto non configurato",
+        text: "Cloud sync non disponibile",
         className: "text-ink-300",
       };
     }
     if (!currentRemoteId) {
       return {
-        text: pendingOperationCount > 0 ? `Pubblicazione iniziale in coda · ${pendingOperationCount} modifiche` : "Mai pubblicato in remoto",
+        text: pendingOperationCount > 0 ? `Prima sincronizzazione in coda · ${pendingOperationCount} modifiche` : "Mai sincronizzato nel cloud",
         className: "text-ink-300",
       };
     }
@@ -214,7 +208,7 @@ export default function App() {
       };
     }
     return {
-      text: `Archivio remoto allineato · rev ${shortRevision(currentRevision)}${
+      text: `Cloud allineato · rev ${shortRevision(currentRevision)}${
         lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
       }`,
       className: "text-mint",
@@ -243,13 +237,19 @@ export default function App() {
     };
   }
 
-  function updateRemoteSettings(updates: Partial<RemoteStorageSettings>) {
-    setRemoteSettings((current) => saveRemoteStorageSettings({ ...current, ...updates }));
-    setSyncError(null);
-  }
-
   function createSeedProject(project: ProjectDocument): ProjectDocument {
     return cloneProjectDocument(project);
+  }
+
+  /**
+   * Saved projects should be backfilled when they have never reached cloud sync,
+   * still have queued operations, or the local snapshot is newer than the last
+   * successful cloud revision we know about.
+   */
+  function shouldSyncSnapshotInBackground(snapshot: ProjectSnapshot): boolean {
+    const pendingCount = snapshot.syncState?.pendingOperations?.length ?? 0;
+    const lastSyncedAt = snapshot.syncState?.lastSyncedAt ?? null;
+    return !snapshot.syncState?.remoteId || pendingCount > 0 || !lastSyncedAt || snapshot.project.savedAt > lastSyncedAt;
   }
 
   function ensureSyncState(project: ProjectDocument, syncState?: ProjectSyncState | null): ProjectSyncState {
@@ -457,14 +457,14 @@ export default function App() {
     if (!model || !currentProjectId || !authUser) return;
     if (!remoteReady) {
       if (trigger === "manual") {
-        setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
+        setSyncError("La sincronizzazione cloud non è disponibile in questa sessione.");
       }
       return;
     }
     const now = currentTimestamp();
     const project = buildProjectDocument(now);
     if (!project) {
-      setSyncError("Impossibile preparare il progetto per la sincronizzazione remota.");
+      setSyncError("Impossibile preparare il progetto per la sincronizzazione cloud.");
       return;
     }
     const syncState = ensureSyncState(project, currentSyncState);
@@ -485,7 +485,7 @@ export default function App() {
 
     try {
       if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
-        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione remota.");
+        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione cloud.");
       }
       const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
       await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
@@ -530,6 +530,47 @@ export default function App() {
     remoteReady,
     syncBusy,
   ]);
+
+  useEffect(() => {
+    const userId = authUser;
+    if (!userId || !remoteReady || currentProjectId !== null || savedProjects.length === 0) return;
+    if (backgroundSyncInFlightRef.current) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      backgroundSyncInFlightRef.current = true;
+      let changed = false;
+
+      try {
+        for (const project of savedProjects) {
+          if (cancelled) return;
+
+          const snapshot = await projectRepository.loadProjectSnapshot(userId, project.id);
+          if (!snapshot || !shouldSyncSnapshotInBackground(snapshot)) continue;
+
+          try {
+            const remote = await syncProjectToRemote(remoteSettings, userId, snapshot);
+            if (cancelled) return;
+            if (await projectRepository.saveProjectSnapshot(userId, remote.snapshot)) {
+              changed = true;
+            }
+          } catch (error) {
+            console.warn("Background cloud sync skipped for saved project", project.id, error);
+          }
+        }
+      } finally {
+        backgroundSyncInFlightRef.current = false;
+        if (!cancelled && changed) {
+          setSavedProjects(await projectRepository.listProjects(userId));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, currentProjectId, remoteReady, remoteSettings, savedProjects]);
 
   // Brief "Salvato!" confirmation flash on the Salva button
   useEffect(() => {
@@ -658,7 +699,7 @@ export default function App() {
   async function executeRefreshFromRemote() {
     if (!currentProjectId || !authUser) return;
     if (!remoteReady) {
-      setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
+      setSyncError("La sincronizzazione cloud non è disponibile in questa sessione.");
       return;
     }
 
@@ -680,7 +721,7 @@ export default function App() {
         syncState: clearPendingOperations(hydratedProject, remote.snapshot.syncState),
       };
       if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
-        throw new Error("Impossibile salvare nel browser la versione ricevuta dall'archivio remoto.");
+        throw new Error("Impossibile salvare nel browser la versione ricevuta dal cloud.");
       }
       setCurrentSyncState(nextSnapshot.syncState ?? null);
       setLastSavedAt(nextSnapshot.project.savedAt);
@@ -1085,9 +1126,7 @@ export default function App() {
         }}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
-        remoteSettings={remoteSettings}
-        onRemoteSettingsChange={updateRemoteSettings}
-        remoteConfigured={remoteReady}
+        sharedSyncReady={remoteReady}
         onLogout={handleLogout}
       />
     );
@@ -1101,9 +1140,7 @@ export default function App() {
           className="flex items-center gap-2 font-semibold hover:opacity-80 transition"
           title="Torna alla dashboard"
         >
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
-            <Newspaper size={16} className="text-ink-950" />
-          </div>
+          <BrandLogo className="h-9 w-auto" />
           <span className="hidden sm:inline text-sm tracking-tight">AI Socratic · Blog Maker</span>
           <span className="sm:hidden text-sm tracking-tight">Blog Maker</span>
         </button>
@@ -1166,8 +1203,8 @@ export default function App() {
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             title={
               remoteReady
-                ? "Forza subito l'invio del batch corrente all'archivio remoto"
-               : "Completa la configurazione dell'archivio remoto nella dashboard"
+                ? "Forza subito l'invio del batch corrente al cloud"
+               : "La sincronizzazione cloud non è disponibile in questa sessione"
             }
           >
             <Cloud size={13} /> Invia ora
@@ -1176,9 +1213,9 @@ export default function App() {
             onClick={refreshFromRemote}
             disabled={!model || syncBusy !== null || !remoteReady}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Ricarica questo progetto dalla versione pubblicata nell'archivio remoto"
+            title="Ricarica questo progetto dalla versione pubblicata nel cloud"
           >
-            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
+            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna cloud
           </button>
           <button
             onClick={saveNow}
@@ -1219,18 +1256,6 @@ export default function App() {
           >
             <FileJson size={14} /> Esporta JSON
           </button>
-          <div className="w-px h-6 bg-ink-600 mx-1" />
-          {remoteRecordUrl && (
-            <a
-              href={remoteRecordUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] text-brand-400 hover:underline"
-              title="Apri il record remoto collegato"
-            >
-              Record remoto
-            </a>
-          )}
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
           <button
             onClick={handleLogout}
@@ -1264,7 +1289,7 @@ export default function App() {
               <div className="flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div>
-                  <div className="font-medium">L'archivio remoto sostituirà le modifiche locali non ancora pubblicate.</div>
+                  <div className="font-medium">La versione nel cloud sostituirà le modifiche locali non ancora pubblicate.</div>
                   <div className="mt-1 text-amber-200">
                     Se vuoi mantenere il lavoro corrente, usa prima “Invia ora”.
                   </div>
@@ -1281,7 +1306,7 @@ export default function App() {
                   onClick={() => void executeRefreshFromRemote()}
                   className="px-3 py-2 rounded-lg bg-amber-400 hover:brightness-110 text-ink-950 text-xs font-semibold transition"
                 >
-                  Sostituisci con archivio remoto
+                  Sostituisci con cloud
                 </button>
               </div>
             </div>
@@ -1376,40 +1401,6 @@ export default function App() {
                   {PROXY_LABELS[i]}
                 </label>
               ))}
-            </div>
-          </details>
-          <details className="mt-4 text-xs text-ink-300">
-            <summary className="cursor-pointer hover:text-ink-100">
-              Archivio remoto · accesso
-            </summary>
-            <div className="mt-3 grid gap-3 md:grid-cols-1">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Endpoint archivio condiviso</span>
-                <input
-                  type="url"
-                  value={remoteSettings.endpointUrl}
-                  onChange={(e) => updateRemoteSettings({ endpointUrl: e.target.value })}
-                  placeholder="https://your-shared-storage-endpoint"
-                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">{remoteCredentialLabel}</span>
-                <input
-                  type="password"
-                  value={remoteSettings.accessKey}
-                  onChange={(e) => updateRemoteSettings({ accessKey: e.target.value })}
-                  placeholder={remoteCredentialPlaceholder}
-                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                />
-                <span className="text-[11px] text-ink-300">
-                  Tenuta solo per la sessione corrente.
-                </span>
-              </label>
-            </div>
-            <div className="mt-2 text-[11px] text-ink-300">
-              Il browser salva automaticamente la copia locale; la sincronizzazione remota invia batch atomici dopo una breve attesa o quando il volume di modifiche cresce.
-              {" "}L'archivio condiviso conserva uno snapshot base e la cronologia dei diff atomici senza esporre dettagli implementativi nell'interfaccia.
             </div>
           </details>
         </section>
@@ -1522,17 +1513,6 @@ export default function App() {
               <Cloud size={11} />
               {remoteStatus.text}
             </div>
-            {remoteRecordUrl && (
-              <a
-                href={remoteRecordUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
-              >
-                Apri record remoto
-              </a>
-            )}
-
             <button
               onClick={() => {
                 setMobileActionsOpen(false);
@@ -1560,7 +1540,7 @@ export default function App() {
               disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
+              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna cloud
             </button>
             <button
               onClick={() => {
