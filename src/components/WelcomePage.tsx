@@ -3,16 +3,14 @@ import {
   Sparkles,
   Link as LinkIcon,
   Loader2,
-  Newspaper,
   History,
   Trash2,
   LogOut,
   Plus,
   Upload,
-  Cloud,
 } from "lucide-react";
 import { formatRelative, type ProjectDocument } from "../lib/storage";
-import type { RemoteStorageSettings } from "../lib/remoteSync";
+import { BrandLogo } from "./BrandLogo";
 
 type Props = {
   username: string;
@@ -23,9 +21,7 @@ type Props = {
   onResume: (project: ProjectDocument) => void;
   onDelete: (project: ProjectDocument) => void;
   onImport: (file: File) => void;
-  remoteSettings: RemoteStorageSettings;
-  onRemoteSettingsChange: (updates: Partial<RemoteStorageSettings>) => void;
-  remoteConfigured: boolean;
+  sharedSyncReady: boolean;
   onLogout: () => void;
 };
 
@@ -38,24 +34,18 @@ export function WelcomePage({
   onResume,
   onDelete,
   onImport,
-  remoteSettings,
-  onRemoteSettingsChange,
-  remoteConfigured,
+  sharedSyncReady,
   onLogout,
 }: Props) {
   const [url, setUrl] = useState(initialURL);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const remoteCredentialLabel = "Chiave di accesso archivio";
-  const remoteCredentialPlaceholder = "Inserisci la chiave di accesso dell'archivio condiviso";
 
   return (
     <div className="min-h-full flex flex-col bg-ink-900 text-ink-100">
       {/* Compact top bar */}
       <header className="px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex items-center gap-4">
         <div className="flex items-center gap-2 font-semibold">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
-            <Newspaper size={16} className="text-ink-950" />
-          </div>
+          <BrandLogo className="h-9 w-auto" />
           <span className="text-sm tracking-tight">AI Socratic · Blog Maker</span>
         </div>
         <div className="flex-1" />
@@ -93,6 +83,11 @@ export function WelcomePage({
             <p className="text-ink-300 text-sm">
               Inizia un nuovo progetto da un URL di AI Socratic, o riprendi un lavoro già iniziato.
             </p>
+            {sharedSyncReady && (
+              <p className="text-ink-400 text-xs mt-3">
+                I progetti salvati continuano a sincronizzarsi automaticamente in background.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -204,7 +199,7 @@ export function WelcomePage({
 
               {savedProjects.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-center text-ink-300 text-xs italic border border-dashed border-ink-600 rounded-lg p-8">
-                  I progetti vengono salvati automaticamente nel browser al primo edit. La sincronizzazione condivisa parte a blocchi quando rileva modifiche locali.
+                  I progetti vengono salvati automaticamente nel browser al primo edit e, quando disponibile, si aggiornano anche nel cloud senza passaggi manuali.
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto scroll-thin pr-1">
@@ -242,56 +237,6 @@ export function WelcomePage({
                   ))}
                 </div>
               )}
-            </div>
-            <div className="lg:col-span-2 rounded-2xl border border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center text-brand-400">
-                  <Cloud size={18} />
-                </div>
-                <div>
-                  <h2 className="font-semibold text-ink-100">Archivio condiviso</h2>
-                  <p className="text-[11px] text-ink-300">
-                    La copia nel browser resta autosalvata; la copia condivisa viene aggiornata automaticamente a blocchi.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Endpoint archivio condiviso</span>
-                  <input
-                    type="url"
-                    value={remoteSettings.endpointUrl}
-                    onChange={(e) => onRemoteSettingsChange({ endpointUrl: e.target.value })}
-                    placeholder="https://your-shared-storage-endpoint"
-                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">{remoteCredentialLabel}</span>
-                  <input
-                    type="password"
-                    value={remoteSettings.accessKey}
-                    onChange={(e) => onRemoteSettingsChange({ accessKey: e.target.value })}
-                    placeholder={remoteCredentialPlaceholder}
-                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                  />
-                </label>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-ink-300">
-                <span
-                  className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border ${
-                    remoteConfigured ? "border-mint/40 bg-mint/10 text-mint" : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                  }`}
-                >
-                  <Cloud size={11} />
-                  {remoteConfigured ? "Archivio remoto pronto" : "Completa la configurazione per attivare la sincronizzazione"}
-                </span>
-                <span>
-                  L'archivio condiviso conserva uno snapshot base e diff atomici pubblicati a blocchi senza esporre dettagli implementativi.
-                </span>
-              </div>
             </div>
           </div>
         </div>

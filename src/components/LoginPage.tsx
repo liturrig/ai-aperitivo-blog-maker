@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { LogIn, Sparkles, AlertCircle } from "lucide-react";
+import { BrandLogo } from "./BrandLogo";
 
 type Props = {
   onLogin: (username: string) => void;
@@ -26,6 +27,7 @@ export function LoginPage({ onLogin }: Props) {
       <div className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-xl">
           <div className="text-center mb-10">
+            <BrandLogo className="h-16 w-auto mx-auto mb-6" />
             <div className="inline-flex items-center gap-3 px-4 py-1.5 rounded-full bg-brand/15 border border-brand/30 text-brand-400 text-xs font-bold uppercase tracking-widest mb-6">
               <Sparkles size={12} /> Editor blog AI Socratic
             </div>
@@ -40,7 +42,7 @@ export function LoginPage({ onLogin }: Props) {
                 letterSpacing: "-0.03em",
               }}
             >
-              AI Socratic<br />Blog Maker
+              Blog Maker
             </h1>
             <p className="text-ink-300 text-base max-w-md mx-auto">
               Riordina, modifica e personalizza un blog post di AI Socratic
