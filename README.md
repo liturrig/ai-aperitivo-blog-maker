@@ -62,8 +62,14 @@ Setup:
 
 1. Open your Supabase SQL editor
 2. Run `supabase/remote-sync-schema.sql`
-3. In the app, choose **Supabase**
-4. Enter the project URL (`https://<project-ref>.supabase.co`)
-5. Enter a project API key for the current session
+3. Optionally copy `.env.example` to `.env.local` and prefill:
+   - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY=<your publishable key>`
+4. In the app, choose **Supabase**
+5. The app will preload those values locally; anything you type in the UI still overrides them for the current browser session
 
-For quick local testing, a service-role key works because it bypasses storage/table policies, but it should stay session-only and never be embedded in a deployed public app. If you prefer using the anon key, add the matching storage and table policies in Supabase first.
+This repo is a Vite client app, so the Next.js-specific `page.tsx`, server helper, and middleware snippets from Supabase docs do not apply here.
+
+For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
+
+If you prefer using the publishable/anon key, add the matching storage and table policies in Supabase first.

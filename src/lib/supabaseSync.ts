@@ -13,6 +13,8 @@ import {
 const SETTINGS_STORAGE_KEY = "aisocratic:supabase-sync-settings";
 const TOKEN_STORAGE_KEY = "aisocratic:supabase-sync-token";
 const MAX_PROJECT_TITLE_LENGTH = 240;
+const ENV_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim() ?? "";
+const ENV_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
 
 export const DEFAULT_SUPABASE_OBJECT_BUCKET = "aisocratic-remote-sync";
 export const DEFAULT_SUPABASE_PROJECTS_TABLE = "aisocratic_remote_projects";
@@ -109,8 +111,8 @@ export function loadSupabaseSyncSettings(): SupabaseSyncSettings {
   }
 
   return normalizeSupabaseSyncSettings({
-    projectUrl: typeof persisted.projectUrl === "string" ? persisted.projectUrl : "",
-    accessKey,
+    projectUrl: withEnvFallback(persisted.projectUrl, ENV_SUPABASE_URL),
+    accessKey: withEnvFallback(accessKey, ENV_SUPABASE_PUBLISHABLE_KEY),
     bucket: typeof persisted.bucket === "string" ? persisted.bucket : DEFAULT_SUPABASE_OBJECT_BUCKET,
     projectsTable:
       typeof persisted.projectsTable === "string" ? persisted.projectsTable : DEFAULT_SUPABASE_PROJECTS_TABLE,
@@ -302,6 +304,12 @@ function requireSupabaseSyncSettings(settings: SupabaseSyncSettings): SupabaseSy
 
 function normalizeProjectUrl(projectUrl: string): string {
   return projectUrl.trim().replace(/\/+$/, "");
+}
+
+function withEnvFallback(value: string | undefined, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed || fallback;
 }
 
 async function resolveProjectRecord(
