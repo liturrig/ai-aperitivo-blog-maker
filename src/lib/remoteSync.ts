@@ -23,8 +23,6 @@ import {
 } from "./supabaseSync";
 import type { ProjectSnapshot } from "./storage";
 
-const REMOTE_PROVIDER_STORAGE_KEY = "aisocratic:remote-storage-provider";
-
 export type RemoteStorageProvider = "github" | "supabase";
 
 export type RemoteStorageSettings = {
@@ -49,12 +47,12 @@ export function loadRemoteStorageSettings(): RemoteStorageSettings {
 }
 
 export function selectRemoteStorageProvider(provider: RemoteStorageProvider): RemoteStorageSettings {
-  persistRemoteProvider(provider);
+  persistRemoteProvider();
   return provider === "supabase" ? loadSupabaseRemoteSettings() : loadGitHubRemoteSettings();
 }
 
 export function saveRemoteStorageSettings(settings: RemoteStorageSettings): RemoteStorageSettings {
-  persistRemoteProvider(settings.provider);
+  persistRemoteProvider();
   if (settings.provider === "supabase") {
     const current = loadSupabaseSyncSettings();
     const normalized = saveSupabaseSyncSettings({
@@ -111,22 +109,10 @@ export async function refreshProjectFromRemote(
 }
 
 function loadStoredProvider(): RemoteStorageProvider {
-  if (typeof localStorage === "undefined") return "github";
-  try {
-    const provider = localStorage.getItem(REMOTE_PROVIDER_STORAGE_KEY);
-    return provider === "supabase" ? "supabase" : "github";
-  } catch {
-    return "github";
-  }
+  return "supabase";
 }
 
-function persistRemoteProvider(provider: RemoteStorageProvider): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(REMOTE_PROVIDER_STORAGE_KEY, provider);
-  } catch {
-    /* noop */
-  }
+function persistRemoteProvider(): void {
 }
 
 function loadGitHubRemoteSettings(): RemoteStorageSettings {

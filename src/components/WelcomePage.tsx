@@ -12,7 +12,7 @@ import {
   Cloud,
 } from "lucide-react";
 import { formatRelative, type ProjectDocument } from "../lib/storage";
-import { selectRemoteStorageProvider, type RemoteStorageSettings } from "../lib/remoteSync";
+import type { RemoteStorageSettings } from "../lib/remoteSync";
 
 type Props = {
   username: string;
@@ -45,11 +45,8 @@ export function WelcomePage({
 }: Props) {
   const [url, setUrl] = useState(initialURL);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const usesSupabaseRemote = remoteSettings.provider === "supabase";
-  const remoteCredentialLabel = usesSupabaseRemote ? "Chiave API Supabase" : "Token GitHub";
-  const remoteCredentialPlaceholder = usesSupabaseRemote
-    ? "Inserisci la project API key"
-    : "Inserisci il personal access token";
+  const remoteCredentialLabel = "Chiave di accesso archivio";
+  const remoteCredentialPlaceholder = "Inserisci la chiave di accesso dell'archivio condiviso";
 
   return (
     <div className="min-h-full flex flex-col bg-ink-900 text-ink-100">
@@ -261,41 +258,15 @@ export function WelcomePage({
 
               <div className="grid grid-cols-1 gap-3">
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Backend remoto</span>
-                  <div className="flex gap-2 flex-wrap">
-                    {[
-                      { value: "github", label: "GitHub Issues" },
-                      { value: "supabase", label: "Supabase" },
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() =>
-                          onRemoteSettingsChange(selectRemoteStorageProvider(option.value as "github" | "supabase"))
-                        }
-                        className={`px-3 py-2 rounded-lg border text-sm transition ${
-                          remoteSettings.provider === option.value
-                            ? "border-brand bg-brand/15 text-ink-100"
-                            : "border-ink-600 hover:border-brand text-ink-300"
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
+                  <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Endpoint archivio condiviso</span>
+                  <input
+                    type="url"
+                    value={remoteSettings.endpointUrl}
+                    onChange={(e) => onRemoteSettingsChange({ endpointUrl: e.target.value })}
+                    placeholder="https://your-shared-storage-endpoint"
+                    className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                  />
                 </label>
-                {usesSupabaseRemote && (
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">URL progetto</span>
-                    <input
-                      type="url"
-                      value={remoteSettings.endpointUrl}
-                      onChange={(e) => onRemoteSettingsChange({ endpointUrl: e.target.value })}
-                      placeholder="https://your-project-ref.supabase.co"
-                      className="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
-                    />
-                  </label>
-                )}
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">{remoteCredentialLabel}</span>
                   <input
@@ -318,9 +289,7 @@ export function WelcomePage({
                   {remoteConfigured ? "Archivio remoto pronto" : "Completa la configurazione per attivare la sincronizzazione"}
                 </span>
                 <span>
-                  {usesSupabaseRemote
-                    ? "Supabase usa object storage per il seed snapshot e tabelle dedicate per i diff atomici."
-                    : "GitHub usa il record remoto come seed snapshot e i commenti per i diff atomici."}
+                  L'archivio condiviso conserva uno snapshot base e diff atomici pubblicati a blocchi senza esporre dettagli implementativi.
                 </span>
               </div>
             </div>

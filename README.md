@@ -43,7 +43,7 @@ Current workflow:
 
 - Remote publishing requires a session credential entered from the dashboard or editor.
 - The credential is kept only for the current browser session.
-- You can now choose between **GitHub Issues** and **Supabase** as the concrete remote backend.
+- The UI keeps the concrete backend transparent and only exposes generic shared-storage settings.
 
 ## Notes
 
@@ -65,9 +65,25 @@ Setup:
 3. Optionally copy `.env.example` to `.env.local` and prefill:
    - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY=<your publishable key>`
-4. In the app, choose **Supabase**
-5. The app will preload those values locally; anything you type in the UI still overrides them for the current browser session
+4. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
 
 For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
 
 If you prefer using the publishable/anon key, add the matching storage and table policies in Supabase first.
+
+## GitHub Pages deployment secrets
+
+The Pages deployment workflow reads two repository secrets at build time and injects them as Vite env variables:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+To set them:
+
+1. Open **GitHub → this repository → Settings → Secrets and variables → Actions**
+2. Click **New repository secret**
+3. Create `VITE_SUPABASE_URL` with the value `https://<your-project-ref>.supabase.co`
+4. Create `VITE_SUPABASE_PUBLISHABLE_KEY` with your Supabase publishable key
+5. Re-run the **Deploy to GitHub Pages** workflow, or push to `main`
+
+The workflow in `.github/workflows/deploy.yml` already forwards those secrets into `npm run build`, so the deployed app starts with shared storage preconfigured.
