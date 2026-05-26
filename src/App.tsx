@@ -32,6 +32,9 @@ import {
   Check,
   LogOut,
   FileJson,
+  AlertCircle,
+  Cloud,
+  RefreshCw,
 } from "lucide-react";
 import { MacroGroup } from "./components/MacroGroup";
 import { NewsEditor } from "./components/NewsEditor";
@@ -50,22 +53,65 @@ import {
   type NewsItem,
 } from "./lib/parser";
 import {
-  saveProject,
-  listProjects,
-  deleteProject,
-  newProjectId,
+  canonicalizeSourceUrl,
+  cloneProjectDocument,
   formatRelative,
-  exportProjectToFile,
-  importProjectFromFile,
-  type SavedProject,
+  normalizeUserId,
+  newProjectId,
+  projectRepository,
+  sourceCacheRepository,
+  type ProjectChangeOperation,
+  type ProjectDocument,
+  type ProjectSnapshot,
+  type ProjectSyncState,
 } from "./lib/storage";
+import {
+  RemoteStorageConflictError,
+  buildRemoteRecordUrl,
+  isRemoteStorageReady,
+  loadRemoteStorageSettings,
+  refreshProjectFromRemote,
+  saveRemoteStorageSettings,
+  syncProjectToRemote,
+  type RemoteStorageSettings,
+} from "./lib/remoteSync";
 
-const AUTH_KEY = "aperitivo:auth";
+const AUTH_KEY = "aisocratic:auth";
+const LEGACY_AUTH_KEY = "aperitivo:auth";
+const REVISION_DISPLAY_LENGTH = 8;
+const EMPTY_REVISION_PLACEHOLDER = "—";
+const REMOTE_AUTOSAVE_IDLE_MS = 5000;
+const REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS = 10;
+
+function cloneBlogModel(model: BlogModel): BlogModel {
+  if (typeof structuredClone === "function") return structuredClone(model);
+  return JSON.parse(JSON.stringify(model)) as BlogModel;
+}
+
+function currentTimestamp(): number {
+  // Wrapped so event handlers and async helpers can read "now" without tripping the
+  // React purity lint that flags direct Date.now() calls inside component scope.
+  return Date.now();
+}
+
+function readStoredAuthUser(): string | null {
+  try {
+    const current = localStorage.getItem(AUTH_KEY);
+    if (current) return current;
+
+    const legacy = localStorage.getItem(LEGACY_AUTH_KEY);
+    if (!legacy) return null;
+
+    localStorage.setItem(AUTH_KEY, legacy);
+    localStorage.removeItem(LEGACY_AUTH_KEY);
+    return legacy;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
-  const [authUser, setAuthUser] = useState<string | null>(() => {
-    try { return localStorage.getItem(AUTH_KEY); } catch { return null; }
-  });
+  const [authUser, setAuthUser] = useState<string | null>(() => readStoredAuthUser());
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [url, setUrl] = useState("https://aisocratic.org/blog/ai-socratic-may-2026");
   const [proxy, setProxy] = useState(PROXIES[0]);
@@ -85,10 +131,16 @@ export default function App() {
   >(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [justSaved, setJustSaved] = useState(false);
-  const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() => listProjects());
+  const [savedProjects, setSavedProjects] = useState<ProjectDocument[]>([]);
+  const [currentSyncState, setCurrentSyncState] = useState<ProjectSyncState | null>(null);
+  const [remoteSettings, setRemoteSettings] = useState<RemoteStorageSettings>(() => loadRemoteStorageSettings());
+  const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [pendingRemoteRefresh, setPendingRemoteRefresh] = useState(false);
   const editModeSnapshotRef = useRef<BlogModel | null>(null);
   const lastOverContainerRef = useRef<string | null>(null);
   const skipNextPreviewRebuild = useRef(false);
+  const flushRemoteChangesRef = useRef<(trigger: "manual" | "auto") => Promise<void>>(async () => {});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -105,6 +157,190 @@ export default function App() {
     [model]
   );
   const hasChanges = orderSignature !== initialMacroOrder && model !== null;
+  const remoteReady = isRemoteStorageReady(remoteSettings);
+  const remoteRecordUrl = useMemo(
+    () => buildRemoteRecordUrl(remoteSettings, currentSyncState?.remoteId ?? null),
+    [remoteSettings, currentSyncState?.remoteId]
+  );
+  const pendingOperationCount = currentSyncState?.pendingOperations?.length ?? 0;
+  const currentRemoteId = currentSyncState?.remoteId ?? null;
+  const currentRevision = currentSyncState?.revision ?? null;
+  const lastRemoteSyncAt = currentSyncState?.lastSyncedAt ?? null;
+  const remoteCredentialLabel = "Chiave di accesso archivio";
+  const remoteCredentialPlaceholder = "Inserisci la chiave di accesso dell'archivio condiviso";
+  const localAheadOfRemote =
+    Boolean(currentProjectId && lastSavedAt && (!lastRemoteSyncAt || lastSavedAt > lastRemoteSyncAt));
+  const remoteStatus = useMemo(() => {
+    if (syncBusy === "push") {
+      return {
+        text: "Sincronizzazione remota in corso…",
+        className: "text-brand-300",
+      };
+    }
+    if (syncBusy === "pull") {
+      return {
+        text: "Aggiornamento remoto in corso…",
+        className: "text-brand-300",
+      };
+    }
+    if (syncError) {
+      return {
+        text: syncError,
+        className: "text-red-300",
+      };
+    }
+    if (!remoteReady) {
+      return {
+        text: "Archivio remoto non configurato",
+        className: "text-ink-300",
+      };
+    }
+    if (!currentRemoteId) {
+      return {
+        text: pendingOperationCount > 0 ? `Pubblicazione iniziale in coda · ${pendingOperationCount} modifiche` : "Mai pubblicato in remoto",
+        className: "text-ink-300",
+      };
+    }
+    if (pendingOperationCount > 0) {
+      return {
+        text: `Pubblicazione automatica in coda · ${pendingOperationCount} modifiche`,
+        className: "text-amber-300",
+      };
+    }
+    if (localAheadOfRemote) {
+      return {
+        text: `Modifiche locali non pubblicate · rev ${shortRevision(currentRevision)}`,
+        className: "text-amber-300",
+      };
+    }
+    return {
+      text: `Archivio remoto allineato · rev ${shortRevision(currentRevision)}${
+        lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
+      }`,
+      className: "text-mint",
+    };
+  }, [currentRemoteId, currentRevision, lastRemoteSyncAt, localAheadOfRemote, pendingOperationCount, remoteReady, syncBusy, syncError]);
+
+  function buildProjectDocument(savedAt: number): ProjectDocument | null {
+    if (!model || !currentProjectId) return null;
+    const existing = savedProjects.find((p) => p.id === currentProjectId);
+    return {
+      id: currentProjectId,
+      sourceUrl: canonicalizeSourceUrl(model.baseHref),
+      title: model.header?.title || model.baseHref,
+      createdAt: existing?.createdAt ?? savedAt,
+      savedAt,
+      model,
+    };
+  }
+
+  function buildProjectSnapshot(savedAt: number): ProjectSnapshot | null {
+    const project = buildProjectDocument(savedAt);
+    if (!project) return null;
+    return {
+      project,
+      syncState: ensureSyncState(project, currentSyncState),
+    };
+  }
+
+  function updateRemoteSettings(updates: Partial<RemoteStorageSettings>) {
+    setRemoteSettings((current) => saveRemoteStorageSettings({ ...current, ...updates }));
+    setSyncError(null);
+  }
+
+  function createSeedProject(project: ProjectDocument): ProjectDocument {
+    return cloneProjectDocument(project);
+  }
+
+  function ensureSyncState(project: ProjectDocument, syncState?: ProjectSyncState | null): ProjectSyncState {
+    return {
+      remoteId: syncState?.remoteId ?? null,
+      revision: syncState?.revision ?? null,
+      lastSyncedAt: syncState?.lastSyncedAt ?? null,
+      seedProject: syncState?.seedProject ? cloneProjectDocument(syncState.seedProject) : createSeedProject(project),
+      pendingOperations: [...(syncState?.pendingOperations ?? [])],
+    };
+  }
+
+  function enqueueOperations(operations: ProjectChangeOperation[], seedProject?: ProjectDocument | null) {
+    if (operations.length === 0) return;
+    setCurrentSyncState((current) => {
+      const fallbackProject = seedProject ?? buildProjectDocument(currentTimestamp());
+      if (!fallbackProject) return current;
+      const normalized = ensureSyncState(fallbackProject, current);
+      return {
+        ...normalized,
+        pendingOperations: [...(normalized.pendingOperations ?? []), ...operations],
+      };
+    });
+    setSyncError(null);
+  }
+
+  function clearPendingOperations(project: ProjectDocument, syncState?: ProjectSyncState | null): ProjectSyncState {
+    const normalized = ensureSyncState(project, syncState);
+    return {
+      ...normalized,
+      pendingOperations: [],
+    };
+  }
+
+  async function hydrateProjectOriginalHTML(project: ProjectDocument): Promise<ProjectDocument> {
+    if (project.model.originalHTML) return project;
+    if (model && model.baseHref === project.model.baseHref && model.originalHTML) {
+      return {
+        ...project,
+        model: { ...project.model, originalHTML: model.originalHTML },
+      };
+    }
+    const cached = await sourceCacheRepository.loadCachedSource(project.sourceUrl);
+    if (cached?.html) {
+      return {
+        ...project,
+        model: { ...project.model, originalHTML: cached.html },
+      };
+    }
+    return project;
+  }
+
+  async function refreshSavedProjects(userId = authUser) {
+    if (!userId) {
+      setSavedProjects([]);
+      return;
+    }
+    setSavedProjects(await projectRepository.listProjects(userId));
+  }
+
+  async function resolveSourceModel(rawUrl: string): Promise<{ sourceUrl: string; model: BlogModel }> {
+    const sourceUrl = canonicalizeSourceUrl(rawUrl);
+    const cached = await sourceCacheRepository.loadCachedSource(sourceUrl);
+    if (cached?.model) {
+      return { sourceUrl, model: cloneBlogModel(cached.model) };
+    }
+
+    const html = await fetchHTML(sourceUrl, proxy);
+    const parsed = parseBlog(html, sourceUrl);
+    await sourceCacheRepository.saveCachedSource({
+      sourceUrl,
+      html,
+      model: parsed,
+      fetchedAt: currentTimestamp(),
+    });
+    return { sourceUrl, model: cloneBlogModel(parsed) };
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!authUser) return;
+
+    void (async () => {
+      const projects = await projectRepository.listProjects(authUser);
+      if (!cancelled) setSavedProjects(projects);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
 
   useEffect(() => {
     if (!model) return;
@@ -188,31 +424,112 @@ export default function App() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  // Auto-save model to localStorage (debounced).
+  // Auto-save model to IndexedDB (debounced).
   // Paused while previewEditMode is on so intermediate inline edits aren't persisted
   // until the user confirms or discards them.
   useEffect(() => {
-    if (!model || !currentProjectId) return;
+    if (!model || !currentProjectId || !authUser) return;
     if (previewEditMode) return;
     const t = setTimeout(() => {
-      const existing = savedProjects.find((p) => p.id === currentProjectId);
-      const now = Date.now();
-      const project: SavedProject = {
-        id: currentProjectId,
-        url: model.baseHref,
-        title: model.header?.title || model.baseHref,
-        createdAt: existing?.createdAt ?? now,
-        savedAt: now,
-        model,
-      };
-      if (saveProject(project)) {
-        setLastSavedAt(now);
-        setSavedProjects(listProjects());
+      const now = currentTimestamp();
+      const project = buildProjectDocument(now);
+      if (!project) {
+        setError("Impossibile salvare il progetto corrente.");
+        return;
       }
+      void (async () => {
+        const snapshot = buildProjectSnapshot(now);
+        if (!snapshot) {
+          setError("Impossibile salvare il progetto corrente.");
+          return;
+        }
+        if (await projectRepository.saveProjectSnapshot(authUser, snapshot)) {
+          setLastSavedAt(snapshot.project.savedAt);
+          await refreshSavedProjects(authUser);
+        }
+      })();
     }, 700);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, currentProjectId, previewEditMode]);
+  }, [model, currentProjectId, previewEditMode, authUser]);
+
+  async function flushRemoteChanges(trigger: "manual" | "auto") {
+    if (!model || !currentProjectId || !authUser) return;
+    if (!remoteReady) {
+      if (trigger === "manual") {
+        setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
+      }
+      return;
+    }
+    const now = currentTimestamp();
+    const project = buildProjectDocument(now);
+    if (!project) {
+      setSyncError("Impossibile preparare il progetto per la sincronizzazione remota.");
+      return;
+    }
+    const syncState = ensureSyncState(project, currentSyncState);
+    const pendingCount = syncState.pendingOperations?.length ?? 0;
+    if (trigger === "auto" && pendingCount === 0) return;
+    if (trigger === "manual" && pendingCount === 0 && syncState.remoteId) {
+      setSyncError(null);
+      return;
+    }
+    const localSnapshot: ProjectSnapshot = {
+      project,
+      syncState,
+    };
+
+    setSyncBusy("push");
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
+
+    try {
+      if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
+        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione remota.");
+      }
+      const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
+      await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
+      setCurrentSyncState(remote.snapshot.syncState ?? null);
+      setLastSavedAt(localSnapshot.project.savedAt);
+      if (trigger === "manual") setJustSaved(true);
+      await refreshSavedProjects(authUser);
+    } catch (e: unknown) {
+      if (e instanceof RemoteStorageConflictError) {
+        setSyncError(e.message);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSyncError(msg);
+      }
+    } finally {
+      setSyncBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    flushRemoteChangesRef.current = flushRemoteChanges;
+  });
+
+  useEffect(() => {
+    if (!model || !currentProjectId || !authUser || !remoteReady) return;
+    if (previewEditMode || syncBusy !== null) return;
+    const pendingCount = currentSyncState?.pendingOperations?.length ?? 0;
+    if (pendingCount === 0) return;
+    // Small queues flush after an idle window so rapid edits collapse into one remote
+    // batch; larger queues flush immediately so long edit bursts don't grow unbounded.
+    const delay = pendingCount >= REMOTE_AUTOSAVE_MAX_PENDING_OPERATIONS ? 0 : REMOTE_AUTOSAVE_IDLE_MS;
+    const timeoutId = setTimeout(() => {
+      void flushRemoteChangesRef.current("auto");
+    }, delay);
+    return () => clearTimeout(timeoutId);
+  }, [
+    authUser,
+    currentProjectId,
+    currentSyncState?.pendingOperations,
+    model,
+    previewEditMode,
+    remoteReady,
+    syncBusy,
+  ]);
 
   // Brief "Salvato!" confirmation flash on the Salva button
   useEffect(() => {
@@ -235,28 +552,33 @@ export default function App() {
 
   /** Fetch a URL fresh and start a NEW project (independent id, even if URL is reused). */
   async function startNewProject(rawUrl: string) {
+    if (!authUser) return;
     setError(null);
     setLoading(true);
     setModel(null);
     setPreviewURL("");
     try {
-      const html = await fetchHTML(rawUrl, proxy);
-      const parsed = parseBlog(html, rawUrl);
+      const { sourceUrl, model: parsed } = await resolveSourceModel(rawUrl);
       const id = newProjectId();
-      const now = Date.now();
-      const project: SavedProject = {
+      const now = currentTimestamp();
+      const project: ProjectDocument = {
         id,
-        url: rawUrl,
-        title: parsed.header?.title || rawUrl,
+        sourceUrl,
+        title: parsed.header?.title || sourceUrl,
         createdAt: now,
         savedAt: now,
         model: parsed,
       };
-      saveProject(project);
+      const syncState = ensureSyncState(project, null);
+      await projectRepository.saveProjectSnapshot(authUser, { project, syncState });
       setCurrentProjectId(id);
+      setCurrentSyncState(syncState);
+      setLastSavedAt(now);
+      setSyncError(null);
+      setPendingRemoteRefresh(false);
       adoptModel(parsed);
-      setSavedProjects(listProjects());
-      setUrl(rawUrl);
+      await refreshSavedProjects(authUser);
+      setUrl(sourceUrl);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg + " — prova a cambiare CORS proxy.");
@@ -272,19 +594,34 @@ export default function App() {
     );
   }
 
-  function resumeProject(p: SavedProject) {
-    setCurrentProjectId(p.id);
-    setUrl(p.url);
-    adoptModel(p.model);
+  async function resumeProject(project: ProjectDocument) {
+    if (!authUser) return;
+    const snapshot = await projectRepository.loadProjectSnapshot(authUser, project.id);
+    if (!snapshot) {
+      setError("Impossibile caricare il progetto salvato selezionato.");
+      return;
+    }
+    const hydratedProject = await hydrateProjectOriginalHTML(snapshot.project);
+    setCurrentProjectId(hydratedProject.id);
+    setUrl(hydratedProject.sourceUrl);
+    setCurrentSyncState(ensureSyncState(hydratedProject, snapshot.syncState));
+    setLastSavedAt(hydratedProject.savedAt);
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
+    adoptModel(cloneBlogModel(hydratedProject.model));
   }
 
-  function removeSavedProject(p: SavedProject) {
+  async function removeSavedProject(p: ProjectDocument) {
     if (!window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) return;
-    deleteProject(p.id);
-    setSavedProjects(listProjects());
+    if (!authUser) return;
+    await projectRepository.deleteProject(authUser, p.id);
+    await refreshSavedProjects();
     if (currentProjectId === p.id) {
       // We just deleted the open project; bounce to dashboard
       setCurrentProjectId(null);
+      setCurrentSyncState(null);
+      setLastSavedAt(null);
+      setSyncError(null);
       setModel(null);
       setPreviewURL("");
     }
@@ -293,76 +630,132 @@ export default function App() {
   async function reloadFromOriginal() {
     if (!model || !currentProjectId) return;
     if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
-    setLoading(true);
-    try {
-      const html = await fetchHTML(model.baseHref, proxy);
-      const parsed = parseBlog(html, model.baseHref);
-      adoptModel(parsed);
-      // Auto-save will persist the refreshed model into the same project id
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg + " — prova a cambiare CORS proxy.");
-    } finally {
-      setLoading(false);
-    }
+    const project = buildProjectDocument(currentTimestamp());
+    if (!project) return;
+    const seedProject = currentSyncState?.seedProject ?? project;
+    const resetProject = cloneProjectDocument(seedProject);
+    enqueueOperations([{ type: "reset-project" }], seedProject);
+    adoptModel(cloneBlogModel(resetProject.model));
+    setUrl(resetProject.sourceUrl);
+    setEditing(null);
   }
 
-  function saveNow() {
-    if (!model || !currentProjectId) return;
-    const existing = savedProjects.find((p) => p.id === currentProjectId);
-    const now = Date.now();
-    const project: SavedProject = {
-      id: currentProjectId,
-      url: model.baseHref,
-      title: model.header?.title || model.baseHref,
-      createdAt: existing?.createdAt ?? now,
-      savedAt: now,
-      model,
-    };
-    if (saveProject(project)) {
-      setLastSavedAt(now);
-      setSavedProjects(listProjects());
+  async function saveNow() {
+    if (!model || !currentProjectId || !authUser) return;
+    const now = currentTimestamp();
+    const snapshot = buildProjectSnapshot(now);
+    if (snapshot && (await projectRepository.saveProjectSnapshot(authUser, snapshot))) {
+      setLastSavedAt(snapshot.project.savedAt);
+      await refreshSavedProjects(authUser);
       setJustSaved(true);
     }
   }
 
+  async function syncNowToRemote() {
+    await flushRemoteChanges("manual");
+  }
+
+  async function executeRefreshFromRemote() {
+    if (!currentProjectId || !authUser) return;
+    if (!remoteReady) {
+      setSyncError("Completa la configurazione dell'archivio remoto prima di usarlo.");
+      return;
+    }
+
+    setSyncBusy("pull");
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
+
+    try {
+      const remote = await refreshProjectFromRemote(
+        remoteSettings,
+        authUser,
+        currentProjectId,
+        model?.baseHref || url,
+        currentSyncState?.remoteId ?? null
+      );
+      const hydratedProject = await hydrateProjectOriginalHTML(remote.snapshot.project);
+      const nextSnapshot: ProjectSnapshot = {
+        project: hydratedProject,
+        syncState: clearPendingOperations(hydratedProject, remote.snapshot.syncState),
+      };
+      if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
+        throw new Error("Impossibile salvare nel browser la versione ricevuta dall'archivio remoto.");
+      }
+      setCurrentSyncState(nextSnapshot.syncState ?? null);
+      setLastSavedAt(nextSnapshot.project.savedAt);
+      setUrl(nextSnapshot.project.sourceUrl);
+      adoptModel(cloneBlogModel(nextSnapshot.project.model));
+      await refreshSavedProjects(authUser);
+      setError(null);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncError(msg);
+    } finally {
+      setSyncBusy(null);
+    }
+  }
+
+  function refreshFromRemote() {
+    if (localAheadOfRemote) {
+      setPendingRemoteRefresh(true);
+      return;
+    }
+    void executeRefreshFromRemote();
+  }
+
   function handleLogin(username: string) {
-    try { localStorage.setItem(AUTH_KEY, username); } catch { /* noop */ }
-    setAuthUser(username);
-    setSavedProjects(listProjects());
+    const normalized = normalizeUserId(username);
+    try {
+      localStorage.setItem(AUTH_KEY, normalized);
+      localStorage.removeItem(LEGACY_AUTH_KEY);
+    } catch {
+      /* noop */
+    }
+    setAuthUser(normalized);
   }
 
   function handleLogout() {
-    try { localStorage.removeItem(AUTH_KEY); } catch { /* noop */ }
+    try {
+      localStorage.removeItem(AUTH_KEY);
+      localStorage.removeItem(LEGACY_AUTH_KEY);
+    } catch {
+      /* noop */
+    }
     setAuthUser(null);
+    setSavedProjects([]);
+    setCurrentSyncState(null);
+    setLastSavedAt(null);
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
   }
 
   function exportCurrent() {
-    if (!model || !currentProjectId) return;
-    const existing = savedProjects.find((p) => p.id === currentProjectId);
-    const now = Date.now();
-    const project: SavedProject = {
-      id: currentProjectId,
-      url: model.baseHref,
-      title: model.header?.title || model.baseHref,
-      createdAt: existing?.createdAt ?? now,
-      savedAt: existing?.savedAt ?? now,
-      model,
-    };
-    exportProjectToFile(project);
+    if (!model || !currentProjectId || !authUser) return;
+    const existingSavedAt = savedProjects.find((p) => p.id === currentProjectId)?.savedAt ?? currentTimestamp();
+    const project = buildProjectDocument(existingSavedAt);
+    if (!project) return;
+    const snapshot: ProjectSnapshot = { project, syncState: currentSyncState };
+    projectRepository.exportProjectToFile(snapshot);
   }
 
   async function importFromFile(file: File) {
+    if (!authUser) return;
     try {
-      const project = await importProjectFromFile(file);
-      setSavedProjects(listProjects());
+      const snapshot = await projectRepository.importProjectFromFile(file, authUser);
+      const project = await hydrateProjectOriginalHTML(snapshot.project);
+      await refreshSavedProjects(authUser);
       // Open the imported project immediately
       setCurrentProjectId(project.id);
-      setUrl(project.url);
-      adoptModel(project.model);
+      setUrl(project.sourceUrl);
+      setCurrentSyncState(ensureSyncState(project, snapshot.syncState));
+      setLastSavedAt(project.savedAt);
+      setSyncError(null);
+      setPendingRemoteRefresh(false);
+      adoptModel(cloneBlogModel(project.model));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError("Import fallito: " + msg);
@@ -371,10 +764,14 @@ export default function App() {
 
   function backToWelcome() {
     setMobileActionsOpen(false);
+    setCurrentSyncState(null);
+    setLastSavedAt(null);
+    setSyncError(null);
+    setPendingRemoteRefresh(false);
     setModel(null);
     setPreviewURL("");
     setCurrentProjectId(null);
-    setSavedProjects(listProjects());
+    void refreshSavedProjects();
   }
 
   function enterPreviewEdit() {
@@ -384,6 +781,11 @@ export default function App() {
     setPreviewEditMode(true);
   }
   function commitPreviewEdit() {
+    const before = editModeSnapshotRef.current;
+    const currentProject = buildProjectDocument(currentTimestamp());
+    if (before && model) {
+      enqueueOperations(diffPreviewEdits(before, model), currentProject);
+    }
     editModeSnapshotRef.current = null;
     setPreviewEditMode(false);
   }
@@ -470,13 +872,25 @@ export default function App() {
       const oldIndex = model.macros.findIndex((m) => m.id === activeId);
       const newIndex = model.macros.findIndex((m) => m.id === overId);
       if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
-      setModel((m) => (m ? { ...m, macros: arrayMove(m.macros, oldIndex, newIndex) } : m));
+      const reordered = arrayMove(model.macros, oldIndex, newIndex);
+      setModel((m) => (m ? { ...m, macros: reordered } : m));
+      enqueueOperations(
+        [{ type: "reorder-macros", macroIds: reordered.map((macro) => macro.id) }],
+        buildProjectDocument(currentTimestamp())
+      );
       return;
     }
 
     if (activeData?.type === "item") {
       const container = findContainer(overId) || activeData.macroId;
       if (!container) return;
+      const macro = model.macros.find((entry) => entry.id === container);
+      if (!macro) return;
+      const items = macro.items;
+      const from = items.findIndex((item) => item.id === activeId);
+      if (from < 0) return;
+      const overIsItem = items.some((item) => item.id === overId);
+      const to = overIsItem ? items.findIndex((item) => item.id === overId) : items.length - 1;
       setModel((m) => {
         if (!m) return m;
         const next = cloneModel(m);
@@ -489,11 +903,16 @@ export default function App() {
         macro.items = arrayMove(items, from, to);
         return next;
       });
+      enqueueOperations(
+        [{ type: "move-item", itemId: activeId, toMacroId: container, toIndex: to }],
+        buildProjectDocument(currentTimestamp())
+      );
     }
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────
   function deleteItem(macroId: string, itemId: string) {
+    const seedProject = buildProjectDocument(currentTimestamp());
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -502,6 +921,7 @@ export default function App() {
       macro.items = macro.items.filter((i) => i.id !== itemId);
       return next;
     });
+    enqueueOperations([{ type: "delete-item", macroId, itemId }], seedProject);
   }
   function renameItem(macroId: string, itemId: string) {
     setEditing({ kind: "item", macroId, itemId });
@@ -512,6 +932,8 @@ export default function App() {
 
   function applyEdit(updates: { title: string; bodyHTML: string }) {
     if (!editing) return;
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const operations: ProjectChangeOperation[] = [];
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -529,6 +951,12 @@ export default function App() {
         itemN.snippet = (tmp.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220);
         const firstImg = tmp.querySelector("img");
         itemN.imageUrl = firstImg?.getAttribute("src") || undefined;
+        operations.push({
+          type: "update-item",
+          itemId: itemN.id,
+          title: updates.title,
+          bodyHTML: updates.bodyHTML,
+        });
       } else {
         const macroN = next.macros.find((x) => x.id === editing.macroId);
         if (!macroN) return m;
@@ -537,9 +965,16 @@ export default function App() {
           updates.title
         )}</h1>`;
         macroN.introHTML = updates.bodyHTML;
+        operations.push({
+          type: "update-macro",
+          macroId: macroN.id,
+          title: updates.title,
+          introHTML: updates.bodyHTML,
+        });
       }
       return next;
     });
+    enqueueOperations(operations, seedProject);
     setEditing(null);
   }
 
@@ -566,6 +1001,9 @@ export default function App() {
   }, [editing, model]);
   function addItem(macroId: string) {
     const it = newItem("Nuova news");
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const currentMacro = model?.macros.find((entry) => entry.id === macroId);
+    const index = currentMacro?.items.length ?? 0;
     setModel((m) => {
       if (!m) return m;
       const next = cloneModel(m);
@@ -573,23 +1011,61 @@ export default function App() {
       macro.items.push(it);
       return next;
     });
+    enqueueOperations([{ type: "add-item", macroId, item: it, index }], seedProject);
     // Open the editor immediately so user can add title, body, image, sources
     setEditing({ kind: "item", macroId, itemId: it.id });
   }
   function deleteMacro(macroId: string) {
     if (!window.confirm("Eliminare l'intera macro-sezione?")) return;
+    const seedProject = buildProjectDocument(currentTimestamp());
     setModel((m) => {
       if (!m) return m;
       return { ...m, macros: m.macros.filter((x) => x.id !== macroId) };
     });
+    enqueueOperations([{ type: "delete-macro", macroId }], seedProject);
   }
   function addMacro() {
     const mac = newMacro("Nuova macro-sezione");
+    const seedProject = buildProjectDocument(currentTimestamp());
+    const index = model?.macros.length ?? 0;
     setModel((m) => (m ? { ...m, macros: [...m.macros, mac] } : m));
+    enqueueOperations([{ type: "add-macro", macro: mac, index }], seedProject);
     setEditing({ kind: "macro", macroId: mac.id });
   }
   function resetOrder() {
     reloadFromOriginal();
+  }
+
+  function diffPreviewEdits(before: BlogModel, after: BlogModel): ProjectChangeOperation[] {
+    const operations: ProjectChangeOperation[] = [];
+    if (before.header.title !== after.header.title) {
+      operations.push({ type: "set-post-title", title: after.header.title });
+    }
+    for (const afterMacro of after.macros) {
+      const beforeMacro = before.macros.find((macro) => macro.id === afterMacro.id);
+      if (!beforeMacro) continue;
+      if (beforeMacro.title !== afterMacro.title || beforeMacro.introHTML !== afterMacro.introHTML) {
+        operations.push({
+          type: "update-macro",
+          macroId: afterMacro.id,
+          ...(beforeMacro.title !== afterMacro.title ? { title: afterMacro.title } : {}),
+          ...(beforeMacro.introHTML !== afterMacro.introHTML ? { introHTML: afterMacro.introHTML } : {}),
+        });
+      }
+      for (const afterItem of afterMacro.items) {
+        const beforeItem = beforeMacro.items.find((item) => item.id === afterItem.id);
+        if (!beforeItem) continue;
+        if (beforeItem.title !== afterItem.title || beforeItem.bodyHTML !== afterItem.bodyHTML) {
+          operations.push({
+            type: "update-item",
+            itemId: afterItem.id,
+            ...(beforeItem.title !== afterItem.title ? { title: afterItem.title } : {}),
+            ...(beforeItem.bodyHTML !== afterItem.bodyHTML ? { bodyHTML: afterItem.bodyHTML } : {}),
+          });
+        }
+      }
+    }
+    return operations;
   }
 
   // ─── Login & Welcome routing ─────────────────────────────────────────────
@@ -604,9 +1080,14 @@ export default function App() {
         loading={loading}
         initialURL={url}
         onLoadURL={(u) => startNewProject(u)}
-        onResume={(p) => resumeProject(p)}
+        onResume={(p) => {
+          void resumeProject(p);
+        }}
         onDelete={(p) => removeSavedProject(p)}
         onImport={(f) => importFromFile(f)}
+        remoteSettings={remoteSettings}
+        onRemoteSettingsChange={updateRemoteSettings}
+        remoteConfigured={remoteReady}
         onLogout={handleLogout}
       />
     );
@@ -623,7 +1104,7 @@ export default function App() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand to-mint flex items-center justify-center">
             <Newspaper size={16} className="text-ink-950" />
           </div>
-          <span className="hidden sm:inline text-sm tracking-tight">AI Aperitivo · Blog Maker</span>
+          <span className="hidden sm:inline text-sm tracking-tight">AI Socratic · Blog Maker</span>
           <span className="sm:hidden text-sm tracking-tight">Blog Maker</span>
         </button>
 
@@ -667,12 +1148,38 @@ export default function App() {
           {lastSavedAt && model && (
             <span
               className="text-[11px] text-ink-300 flex items-center gap-1.5 mr-1"
-              title={`Auto-salvato in localStorage · ${new Date(lastSavedAt).toLocaleString()}`}
+              title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
             >
               <SaveIcon size={11} className="text-mint" />
               Salvato {formatRelative(lastSavedAt)}
             </span>
           )}
+          {model && (
+            <span className={`text-[11px] flex items-center gap-1.5 mr-1 ${remoteStatus.className}`}>
+              <Cloud size={11} />
+              {remoteStatus.text}
+            </span>
+          )}
+          <button
+            onClick={syncNowToRemote}
+            disabled={!model || syncBusy !== null || !remoteReady}
+            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title={
+              remoteReady
+                ? "Forza subito l'invio del batch corrente all'archivio remoto"
+               : "Completa la configurazione dell'archivio remoto nella dashboard"
+            }
+          >
+            <Cloud size={13} /> Invia ora
+          </button>
+          <button
+            onClick={refreshFromRemote}
+            disabled={!model || syncBusy !== null || !remoteReady}
+            className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Ricarica questo progetto dalla versione pubblicata nell'archivio remoto"
+          >
+            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
+          </button>
           <button
             onClick={saveNow}
             disabled={!model}
@@ -713,6 +1220,17 @@ export default function App() {
             <FileJson size={14} /> Esporta JSON
           </button>
           <div className="w-px h-6 bg-ink-600 mx-1" />
+          {remoteRecordUrl && (
+            <a
+              href={remoteRecordUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-brand-400 hover:underline"
+              title="Apri il record remoto collegato"
+            >
+              Record remoto
+            </a>
+          )}
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
           <button
             onClick={handleLogout}
@@ -730,6 +1248,42 @@ export default function App() {
           {error && (
             <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm">
               {error}
+            </div>
+          )}
+          {syncError && (
+            <div className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm flex items-start gap-2">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>{syncError}</span>
+            </div>
+          )}
+          {pendingRemoteRefresh && (
+            <div
+              className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-100 text-sm"
+              role="alert"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-medium">L'archivio remoto sostituirà le modifiche locali non ancora pubblicate.</div>
+                  <div className="mt-1 text-amber-200">
+                    Se vuoi mantenere il lavoro corrente, usa prima “Invia ora”.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setPendingRemoteRefresh(false)}
+                  className="px-3 py-2 rounded-lg border border-ink-600 hover:border-ink-500 text-xs transition"
+                >
+                  Annulla
+                </button>
+                <button
+                  onClick={() => void executeRefreshFromRemote()}
+                  className="px-3 py-2 rounded-lg bg-amber-400 hover:brightness-110 text-ink-950 text-xs font-semibold transition"
+                >
+                  Sostituisci con archivio remoto
+                </button>
+              </div>
             </div>
           )}
 
@@ -822,6 +1376,40 @@ export default function App() {
                   {PROXY_LABELS[i]}
                 </label>
               ))}
+            </div>
+          </details>
+          <details className="mt-4 text-xs text-ink-300">
+            <summary className="cursor-pointer hover:text-ink-100">
+              Archivio remoto · accesso
+            </summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-1">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">Endpoint archivio condiviso</span>
+                <input
+                  type="url"
+                  value={remoteSettings.endpointUrl}
+                  onChange={(e) => updateRemoteSettings({ endpointUrl: e.target.value })}
+                  placeholder="https://your-shared-storage-endpoint"
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] uppercase tracking-widest font-bold text-ink-300">{remoteCredentialLabel}</span>
+                <input
+                  type="password"
+                  value={remoteSettings.accessKey}
+                  onChange={(e) => updateRemoteSettings({ accessKey: e.target.value })}
+                  placeholder={remoteCredentialPlaceholder}
+                  className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-600 text-sm focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
+                />
+                <span className="text-[11px] text-ink-300">
+                  Tenuta solo per la sessione corrente.
+                </span>
+              </label>
+            </div>
+            <div className="mt-2 text-[11px] text-ink-300">
+              Il browser salva automaticamente la copia locale; la sincronizzazione remota invia batch atomici dopo una breve attesa o quando il volume di modifiche cresce.
+              {" "}L'archivio condiviso conserva uno snapshot base e la cronologia dei diff atomici senza esporre dettagli implementativi nell'interfaccia.
             </div>
           </details>
         </section>
@@ -924,11 +1512,25 @@ export default function App() {
             {lastSavedAt && (
               <div
                 className="text-[11px] text-ink-300 flex items-center gap-1.5 px-1 pb-1"
-                title={`Auto-salvato in localStorage · ${new Date(lastSavedAt).toLocaleString()}`}
+                title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
               >
                 <SaveIcon size={11} className="text-mint" />
                 Salvato {formatRelative(lastSavedAt)}
               </div>
+            )}
+            <div className={`text-[11px] flex items-center gap-1.5 px-1 pb-1 ${remoteStatus.className}`}>
+              <Cloud size={11} />
+              {remoteStatus.text}
+            </div>
+            {remoteRecordUrl && (
+              <a
+                href={remoteRecordUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-brand-400 hover:underline px-1 pb-1"
+              >
+                Apri record remoto
+              </a>
             )}
 
             <button
@@ -939,6 +1541,26 @@ export default function App() {
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition"
             >
               <History size={14} /> Progetti
+            </button>
+            <button
+              onClick={() => {
+                void syncNowToRemote();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model || syncBusy !== null || !remoteReady}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Cloud size={13} /> Invia ora
+            </button>
+            <button
+              onClick={() => {
+                void refreshFromRemote();
+                setMobileActionsOpen(false);
+              }}
+              disabled={!model || syncBusy !== null || !remoteReady}
+              className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna remoto
             </button>
             <button
               onClick={() => {
@@ -1058,4 +1680,8 @@ function cloneModel(m: BlogModel): BlogModel {
 }
 function escapeHTML(s: string) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+}
+
+function shortRevision(revision: string | null | undefined): string {
+  return revision ? revision.slice(0, REVISION_DISPLAY_LENGTH) : EMPTY_REVISION_PLACEHOLDER;
 }

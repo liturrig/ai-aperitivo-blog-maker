@@ -1,73 +1,89 @@
-# React + TypeScript + Vite
+# AI Socratic Blog Maker
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Browser editor for AI Socratic blog posts built with React, TypeScript, and Vite.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Useful commands:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run lint
+npm run build
 ```
+
+## How saving works
+
+- The working copy is auto-saved in the browser after a short debounce.
+- Shared storage sync batches local edits and publishes them automatically after a short idle window or when the pending change volume grows.
+- Refreshing from shared storage replaces the current local snapshot only after the revision check passes.
+
+## Shared storage workflow
+
+Each project keeps:
+
+- a stable project identifier
+- a remote revision
+- the last successful remote sync timestamp
+- user and source-seed scope metadata for remote filtering
+- a seed snapshot plus a queue of pending local operations
+
+Current workflow:
+
+1. Edit normally
+2. Let the browser autosave locally, or click **Salva**
+3. Let shared storage publish the current batch automatically, or click **Invia ora** to flush it immediately
+4. Click **Aggiorna remoto** to replace the local project with the latest reconstructed remote state
+
+## Access
+
+- Remote publishing requires a session credential entered from the dashboard or editor.
+- The credential is kept only for the current browser session.
+- The UI keeps the concrete backend transparent and only exposes generic shared-storage settings.
+
+## Notes
+
+- The remote adapter stores one seed snapshot in the shared record and appends atomic operation batches in remote comments.
+- Refresh reconstructs the current remote project by replaying those comment batches on top of the stored seed snapshot.
+
+## Supabase remote backend
+
+The Supabase implementation keeps:
+
+- the seed snapshot in object storage (`aisocratic-remote-sync`)
+- remote project metadata in `public.aisocratic_remote_projects`
+- one atomic diff row per queued UI operation in `public.aisocratic_remote_events`
+
+Setup:
+
+1. Open your Supabase SQL editor
+2. Run `supabase/remote-sync-schema.sql`
+3. Optionally copy `.env.example` to `.env.local` and prefill:
+   - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY=<your publishable key>`
+4. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
+
+For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
+
+If you prefer using the publishable/anon key, add the matching storage and table policies in Supabase first.
+
+## GitHub Pages deployment secrets
+
+The Pages deployment workflow reads two repository secrets at build time and injects them as Vite env variables:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+To set them:
+
+1. Open **GitHub → this repository → Settings → Secrets and variables → Actions**
+2. Click **New repository secret**
+3. Create `VITE_SUPABASE_URL` with the value `https://<your-project-ref>.supabase.co`
+4. Create `VITE_SUPABASE_PUBLISHABLE_KEY` with your Supabase publishable key
+5. Re-run the **Deploy to GitHub Pages** workflow, or push to `main`
+
+The workflow in `.github/workflows/deploy.yml` already forwards those secrets into `npm run build`, so the deployed app starts with shared storage preconfigured.
