@@ -429,9 +429,12 @@ async function uploadSeedObject(
 }
 
 async function downloadSeedObject(settings: SupabaseSyncSettings, objectPath: string): Promise<ProjectDocument> {
+  // Use the policy-based path (not the `authenticated/` variant, which requires a Supabase Auth
+  // session token).  The plain `/object/<bucket>/…` path honours the `Authorization` header and
+  // evaluates storage RLS policies, so it works for both service-role and publishable/anon keys.
   const text = await requestSupabaseText(
     settings,
-    `/storage/v1/object/authenticated/${encodePathSegment(settings.bucket)}/${encodeObjectPath(objectPath)}`
+    `/storage/v1/object/${encodePathSegment(settings.bucket)}/${encodeObjectPath(objectPath)}`
   );
   const parsed = JSON.parse(text) as unknown;
   return toLocalProjectDocument(parsed);
