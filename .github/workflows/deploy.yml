@@ -10,8 +10,6 @@ on:
       - "package-lock.json"
       - "vite.config.ts"
       - "tsconfig*.json"
-      - "postcss.config.js"
-      - "tailwind.config.js"
       - "src/**"
       - "public/**"
   workflow_dispatch:
