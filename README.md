@@ -60,12 +60,11 @@ The Supabase implementation keeps:
 
 Setup:
 
-1. Open your Supabase SQL editor
-2. Run `supabase/remote-sync-schema.sql`
-3. Optionally copy `.env.example` to `.env.local` and prefill:
+1. If you want to initialize the schema manually, open your Supabase SQL editor and run `supabase/remote-sync-schema.sql`
+2. Optionally copy `.env.example` to `.env.local` and prefill:
    - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY=<your publishable key>`
-4. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
+3. The app will preload those values locally; anything you type in the shared-storage fields still overrides them for the current browser session
 
 For quick local testing, a service-role key works because it bypasses storage and table policies, but it should stay session-only and never be committed.
 
@@ -87,3 +86,18 @@ To set them:
 5. Re-run the **Deploy to GitHub Pages** workflow, or push to `main`
 
 The workflow in `.github/workflows/deploy.yml` already forwards those secrets into `npm run build`, so the deployed app starts with shared storage preconfigured.
+
+## Supabase migration CI/CD
+
+The repository also includes `.github/workflows/supabase-migrations.yml` to validate and apply the schema in `supabase/migrations`.
+
+- On pull requests, it links to the target Supabase project and runs a dry-run migration check
+- On pushes to `main` (and manual dispatch), it applies all pending migrations to the linked Supabase project
+
+Required repository secrets:
+
+- `SUPABASE_ACCESS_TOKEN`
+- `SUPABASE_DB_PASSWORD`
+- `SUPABASE_PROJECT_REF`
+
+The current initial migration is `supabase/migrations/20260526162500_remote_sync_schema.sql`, which creates the storage bucket plus the `aisocratic_remote_projects` and `aisocratic_remote_events` tables for the remote sync backend.
