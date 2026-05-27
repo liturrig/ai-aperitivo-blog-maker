@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const LOGO_URLS = {
   light:
@@ -14,11 +14,8 @@ type Props = {
 };
 
 export function BrandLogo({ className = "", variant = "light" }: Props) {
-  const [src, setSrc] = useState(LOGO_URLS[variant]);
-
-  useEffect(() => {
-    setSrc(LOGO_URLS[variant]);
-  }, [variant]);
+  const [failed, setFailed] = useState(false);
+  const src = failed ? FALLBACK_LOGO_URL : LOGO_URLS[variant];
 
   return (
     <img
@@ -26,7 +23,7 @@ export function BrandLogo({ className = "", variant = "light" }: Props) {
       alt="AI Socratic logo"
       className={className}
       onError={() => {
-        if (src !== FALLBACK_LOGO_URL) setSrc(FALLBACK_LOGO_URL);
+        if (!failed) setFailed(true);
       }}
     />
   );
