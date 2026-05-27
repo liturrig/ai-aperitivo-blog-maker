@@ -44,48 +44,45 @@ export function WelcomePage({
     <div className="min-h-full flex flex-col bg-ink-900 text-ink-100">
       {/* Compact top bar */}
       <header className="px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex items-center gap-4">
-        <div className="flex items-center gap-2 font-semibold">
-          <BrandLogo className="h-9 w-auto" />
-          <span className="text-sm tracking-tight">AI Socratic · Blog Maker</span>
+        <div className="flex items-center font-semibold">
+          <BrandLogo variant="dark" className="h-9 w-auto" />
         </div>
         <div className="flex-1" />
         <span className="text-xs text-ink-300">
-          Bentornato, <span className="text-ink-100 font-semibold capitalize">{username}</span>
+          Welcome back, <span className="text-ink-100 font-semibold capitalize">{username}</span>
         </span>
         <button
           onClick={onLogout}
           className="px-3 py-1.5 rounded-md border border-ink-600 hover:border-red-500 hover:text-red-400 text-xs flex items-center gap-1.5 transition"
-          title="Esci"
+          title="Sign out"
         >
-          <LogOut size={12} /> Logout
+          <LogOut size={12} /> Sign out
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto scroll-thin">
         <div className="max-w-5xl mx-auto px-6 py-12">
           <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/15 border border-brand/30 text-brand-400 text-[11px] font-bold uppercase tracking-widest mb-4">
-              <Sparkles size={11} /> Dashboard
-            </div>
             <h1
-              className="font-bold tracking-tight leading-tight mb-3"
+              className="font-extralight tracking-tight leading-[1.05] mb-3 pb-[0.08em]"
               style={{
                 fontSize: "clamp(32px, 5vw, 56px)",
-                background: "linear-gradient(120deg, #ffffff 0%, #c4b8ff 50%, #5fffce 100%)",
+                fontFamily: "sentient, serif",
+                background: "linear-gradient(120deg, #ffffff 0%, #c4b8ff 45%, #5fffce 100%)",
                 WebkitBackgroundClip: "text",
                 backgroundClip: "text",
                 WebkitTextFillColor: "transparent",
-                letterSpacing: "-0.025em",
+                letterSpacing: "-0.03em",
               }}
             >
-              Da dove vuoi cominciare?
+              Where would you like to start?
             </h1>
             <p className="text-ink-300 text-sm">
-              Inizia un nuovo progetto da un URL di AI Socratic, o riprendi un lavoro già iniziato.
+              Start a new project from an AI Socratic URL, or continue a saved one.
             </p>
             {sharedSyncReady && (
               <p className="text-ink-400 text-xs mt-3">
-                I progetti salvati continuano a sincronizzarsi automaticamente in background.
+                Saved projects continue syncing automatically in the background.
               </p>
             )}
           </div>
@@ -98,8 +95,8 @@ export function WelcomePage({
                   <Plus size={18} />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-ink-100">Nuovo progetto</h2>
-                  <p className="text-[11px] text-ink-300">Parti da un blog post di aisocratic.org</p>
+                  <h2 className="font-semibold text-ink-100">New project</h2>
+                  <p className="text-[11px] text-ink-300">Start from an aisocratic.org blog post</p>
                 </div>
               </div>
 
@@ -120,19 +117,19 @@ export function WelcomePage({
                   />
                 </div>
                 <div className="text-[11px] text-ink-300">
-                  Esempi:{" "}
+                  Examples:{" "}
                   <button
                     onClick={() => setUrl("https://aisocratic.org/blog/ai-socratic-may-2026")}
                     className="text-brand-400 hover:underline"
                   >
-                    maggio 2026
+                    May 2026
                   </button>
                   {" · "}
                   <button
                     onClick={() => setUrl("https://aisocratic.org/blog/ai-socratic-april-2026")}
                     className="text-brand-400 hover:underline"
                   >
-                    aprile 2026
+                    April 2026
                   </button>
                 </div>
 
@@ -148,12 +145,12 @@ export function WelcomePage({
                   ) : (
                     <Sparkles size={15} />
                   )}
-                  {loading ? "Carico…" : "Inizia"}
+                  {loading ? "Loading…" : "Start"}
                 </button>
 
                 <div className="relative flex items-center gap-3 my-1">
                   <div className="flex-1 h-px bg-ink-600" />
-                  <span className="text-[10px] uppercase tracking-widest font-bold text-ink-300">oppure</span>
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-ink-300">or</span>
                   <div className="flex-1 h-px bg-ink-600" />
                 </div>
 
@@ -174,9 +171,9 @@ export function WelcomePage({
                   className="w-full py-2.5 rounded-lg border border-dashed border-ink-600 hover:border-brand hover:text-brand-400
                              text-ink-300 text-sm font-medium flex items-center justify-center gap-2 transition
                              disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Importa un file .json esportato da un altro dispositivo"
+                  title="Import a .json file exported from another device"
                 >
-                  <Upload size={14} /> Importa progetto da file JSON
+                  <Upload size={14} /> Import project from JSON
                 </button>
               </div>
             </div>
@@ -188,18 +185,18 @@ export function WelcomePage({
                   <History size={18} />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-ink-100">Progetti salvati</h2>
+                  <h2 className="font-semibold text-ink-100">Saved projects</h2>
                   <p className="text-[11px] text-ink-300">
                     {savedProjects.length === 0
-                      ? "Nessun progetto ancora salvato"
-                      : `${savedProjects.length} ${savedProjects.length === 1 ? "progetto disponibile" : "progetti disponibili"}`}
+                      ? "No saved projects yet"
+                      : `${savedProjects.length} ${savedProjects.length === 1 ? "project available" : "projects available"}`}
                   </p>
                 </div>
               </div>
 
               {savedProjects.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-center text-ink-300 text-xs italic border border-dashed border-ink-600 rounded-lg p-8">
-                  I progetti vengono salvati automaticamente nel browser al primo edit e, quando disponibile, si aggiornano anche nel cloud senza passaggi manuali.
+                  Projects are saved automatically in your browser after the first edit and, when available, also sync to the cloud automatically.
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto scroll-thin pr-1">
@@ -224,12 +221,12 @@ export function WelcomePage({
                         onClick={() => onResume(p)}
                         className="text-[11px] px-2.5 py-1 rounded bg-brand hover:brightness-110 text-white font-semibold whitespace-nowrap"
                       >
-                        Riprendi
+                        Resume
                       </button>
                       <button
                         onClick={() => onDelete(p)}
                         className="w-7 h-7 rounded border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                        title="Elimina progetto salvato"
+                        title="Delete saved project"
                       >
                         <Trash2 size={12} />
                       </button>

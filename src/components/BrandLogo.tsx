@@ -1,22 +1,29 @@
 import { useState } from "react";
 
-const BRAND_LOGO_URL = "https://aisocratic.org/images/logo/ai-socratic-logo.png";
-const FALLBACK_LOGO_URL = `${import.meta.env.BASE_URL}favicon.svg`;
+const LOGO_URLS = {
+  light:
+    "https://pub-7a2c36ac409a4be0a469be59c0e02fd6.r2.dev/images/logo/ai-socratic-logo.png",
+  dark:
+    "https://pub-7a2c36ac409a4be0a469be59c0e02fd6.r2.dev/images/logo/ai-socratic-logo-dark.png",
+} as const;
+const FALLBACK_LOGO_URL = LOGO_URLS.light;
 
 type Props = {
   className?: string;
+  variant?: keyof typeof LOGO_URLS;
 };
 
-export function BrandLogo({ className = "" }: Props) {
-  const [src, setSrc] = useState(BRAND_LOGO_URL);
+export function BrandLogo({ className = "", variant = "light" }: Props) {
+  const [failed, setFailed] = useState(false);
+  const src = failed ? FALLBACK_LOGO_URL : LOGO_URLS[variant];
 
   return (
     <img
       src={src}
-      alt="AI Socratic"
+      alt="AI Socratic logo"
       className={className}
       onError={() => {
-        if (src !== FALLBACK_LOGO_URL) setSrc(FALLBACK_LOGO_URL);
+        if (!failed) setFailed(true);
       }}
     />
   );

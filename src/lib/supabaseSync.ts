@@ -173,7 +173,7 @@ export async function syncProjectToSupabase(
   );
 
   if (existingRecord && existingRecord.project_id !== localProject.id) {
-    throw new Error("Il record Supabase configurato appartiene a un progetto diverso.");
+    throw new Error("The configured Supabase record belongs to a different project.");
   }
 
   const remoteState = existingRecord
@@ -182,7 +182,7 @@ export async function syncProjectToSupabase(
 
   if (existingRecord && remoteState && remoteState.revision !== (snapshot.syncState?.revision ?? null)) {
     throw new SupabaseSyncConflictError(
-      "La revisione remota su Supabase è cambiata. Aggiorna il progetto da Supabase prima di sincronizzare di nuovo."
+      "The remote Supabase revision changed. Refresh the project from Supabase before syncing again."
     );
   }
 
@@ -259,10 +259,10 @@ export async function refreshProjectFromSupabase(
   const sourceSeed = buildSourceSeed(sourceUrl);
   const record = await resolveProjectRecord(normalizedSettings, projectId, normalizedUserId, sourceSeed, remoteId ?? null);
   if (!record) {
-    throw new Error("Nessun record Supabase trovato per questo progetto.");
+    throw new Error("No Supabase record found for this project.");
   }
   if (record.project_id !== projectId) {
-    throw new Error("Il record Supabase configurato appartiene a un progetto diverso.");
+    throw new Error("The configured Supabase record belongs to a different project.");
   }
 
   const remoteState = await loadRemoteState(normalizedSettings, record);
@@ -296,7 +296,7 @@ function requireSupabaseSyncSettings(settings: SupabaseSyncSettings): SupabaseSy
   const normalized = normalizeSupabaseSyncSettings(settings);
   if (!normalized.projectUrl || !normalized.accessKey) {
     throw new SupabaseSyncConfigurationError(
-      "Configura URL progetto e chiave API Supabase prima di usare la sincronizzazione remota."
+      "Configure the Supabase project URL and API key before using remote sync."
     );
   }
   return normalized;
@@ -501,7 +501,7 @@ function toRemoteProjectDocument(project: ProjectDocument): ProjectDocument {
 
 function toLocalProjectDocument(value: unknown): ProjectDocument {
   if (!value || typeof value !== "object") {
-    throw new Error("Lo snapshot Supabase non contiene un progetto valido.");
+    throw new Error("The Supabase snapshot does not contain a valid project.");
   }
 
   const candidate = value as Partial<ProjectDocument> & {
@@ -516,7 +516,7 @@ function toLocalProjectDocument(value: unknown): ProjectDocument {
     !candidate.model ||
     !Array.isArray(candidate.model.macros)
   ) {
-    throw new Error("Lo snapshot Supabase è incompleto.");
+    throw new Error("The Supabase snapshot is incomplete.");
   }
 
   return {

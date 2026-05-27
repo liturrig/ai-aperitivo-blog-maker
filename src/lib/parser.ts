@@ -44,13 +44,13 @@ const IS_DEV = typeof import.meta !== "undefined" && (import.meta as ImportMeta 
 
 export const PROXIES = IS_DEV ? [PROXY_LOCAL, ...PUBLIC_PROXIES] : [...PUBLIC_PROXIES];
 export const PROXY_LABELS = IS_DEV
-  ? ["Locale (Vite)", "allorigins.win", "codetabs.com", "corsproxy.io"]
+  ? ["Local (Vite)", "allorigins.win", "codetabs.com", "corsproxy.io"]
   : ["allorigins.win", "codetabs.com", "corsproxy.io"];
 
 function toLocalProxyURL(url: string): string {
   const u = new URL(url);
   if (!u.hostname.endsWith("aisocratic.org")) {
-    throw new Error("Il proxy locale supporta solo URL di aisocratic.org. Cambia proxy o URL.");
+    throw new Error("The local proxy only supports aisocratic.org URLs. Change the proxy or URL.");
   }
   return "/_aisocratic" + u.pathname + u.search;
 }
@@ -63,7 +63,7 @@ export async function fetchHTML(url: string, proxy: string): Promise<string> {
   const res = await fetch(target);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
-  if (!text || text.length < 500) throw new Error("Risposta vuota o troppo corta dal proxy.");
+  if (!text || text.length < 500) throw new Error("Empty or too-short response from the proxy.");
   return text;
 }
 
@@ -216,7 +216,7 @@ export function parseBlog(html: string, sourceURL: string): BlogModel {
   ensureBase(doc, sourceURL);
 
   const prose = findProseContainer(doc);
-  if (!prose) throw new Error("Impossibile trovare il contenuto dell'articolo (.prose).");
+  if (!prose) throw new Error("Unable to find the article content (.prose).");
 
   // Split into macros at every direct H1[id]
   const children = Array.from(prose.childNodes);
@@ -235,7 +235,7 @@ export function parseBlog(html: string, sourceURL: string): BlogModel {
     }
   }
   if (cur) macroBuckets.push(cur);
-  if (macroBuckets.length === 0) throw new Error("Nessuna sezione H1 trovata.");
+  if (macroBuckets.length === 0) throw new Error("No H1 sections found.");
 
   const macros: MacroSection[] = macroBuckets.map((bucket) =>
     buildMacroFromBucket(bucket)
@@ -346,7 +346,7 @@ export function newItem(title: string): NewsItem {
     title,
     level: 2,
     headingHTML: `<h2 id="${escapeAttr(id)}" class="news-heading">${escapeHtml(title)}</h2>`,
-    bodyHTML: `<p class="news-empty"><em>Aggiungi qui il contenuto della notizia…</em></p>`,
+    bodyHTML: `<p class="news-empty"><em>Add the story content here…</em></p>`,
     snippet: "",
     custom: true,
   };
@@ -525,7 +525,7 @@ ${linksHTML}
   body.editing .editable:hover { outline-color: var(--brand); }
   body.editing .editable:focus { outline: 2px solid var(--brand); outline-offset: 4px; background: rgba(124,92,255,0.05); }
   body.editing .macro-intro:empty::before {
-    content: "Intro (clicca per scrivere…)";
+    content: "Intro (click to write…)";
     color: var(--muted); font-style: italic; opacity: 0.6;
   }
   body.editing .macro-intro { min-height: 28px; padding: 4px; }
@@ -610,7 +610,7 @@ ${linksHTML}
 </style>
 </head>
 <body class="${editMode ? "editing" : ""}">
-${editMode ? '<div class="edit-banner">✏️ Modalità modifica attiva · clicca testo o immagini per modificare · clicca fuori per salvare</div>' : ""}
+${editMode ? '<div class="edit-banner">✏️ Edit mode active · click text or images to edit · click outside to save</div>' : ""}
 <div class="wrap">
   <header class="hero-card">
     <div class="hero-meta">
@@ -635,8 +635,8 @@ ${editMode ? '<div class="edit-banner">✏️ Modalità modifica attiva · clicc
   ${macrosHTML}
 </div>
 
-<div id="lightbox" role="dialog" aria-modal="true" aria-label="Immagine ingrandita">
-  <button class="close" aria-label="Chiudi">&times;</button>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image">
+  <button class="close" aria-label="Close">&times;</button>
   <img alt="" />
 </div>
 
@@ -906,7 +906,7 @@ ${editMode ? '<div class="edit-banner">✏️ Modalità modifica attiva · clicc
       if (text && text.parentNode) text.remove();
       else {
         text = document.createElement('p');
-        text.innerHTML = '<em>Scrivi qui il testo…</em>';
+        text.innerHTML = '<em>Write text here…</em>';
       }
       var newCc = document.createElement('div');
       newCc.className = 'columns-container';
@@ -977,25 +977,25 @@ ${editMode ? '<div class="edit-banner">✏️ Modalità modifica attiva · clicc
         setImageLayout(wrap, layout);
         refreshLayoutActive();
       }
-      var fullBtn = makeImgBtn('▭ Largo', 'layout', function () { applyLayout('full'); });
+      var fullBtn = makeImgBtn('▭ Full', 'layout', function () { applyLayout('full'); });
       fullBtn.dataset.layout = 'full';
-      fullBtn.title = 'Immagine a tutta larghezza';
-      var leftBtn = makeImgBtn('◧ Sx', 'layout', function () { applyLayout('left'); });
+      fullBtn.title = 'Full-width image';
+      var leftBtn = makeImgBtn('◧ Left', 'layout', function () { applyLayout('left'); });
       leftBtn.dataset.layout = 'left';
-      leftBtn.title = 'Immagine a sinistra, testo a destra';
-      var rightBtn = makeImgBtn('◨ Dx', 'layout', function () { applyLayout('right'); });
+      leftBtn.title = 'Image on the left, text on the right';
+      var rightBtn = makeImgBtn('◨ Right', 'layout', function () { applyLayout('right'); });
       rightBtn.dataset.layout = 'right';
-      rightBtn.title = 'Immagine a destra, testo a sinistra';
+      rightBtn.title = 'Image on the right, text on the left';
       tools.appendChild(fullBtn);
       tools.appendChild(leftBtn);
       tools.appendChild(rightBtn);
 
-      tools.appendChild(makeImgBtn('✎ Cambia', '', function () {
-        var url = prompt('Nuovo URL immagine:', img.src);
+      tools.appendChild(makeImgBtn('✎ Change', '', function () {
+        var url = prompt('New image URL:', img.src);
         if (url) { img.src = url; commitContainer(container); }
       }));
-      tools.appendChild(makeImgBtn('✕ Elimina', 'delete', function () {
-        if (confirm('Eliminare questa immagine?')) {
+      tools.appendChild(makeImgBtn('✕ Delete', 'delete', function () {
+        if (confirm('Delete this image?')) {
           var block = imageBlock(wrap);
           block.remove();
           cleanupColumns(container);

@@ -179,7 +179,7 @@ export const projectRepository: ProjectRepository = {
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error("File non è JSON valido.");
+      throw new Error("File is not valid JSON.");
     }
 
     const snapshot = parseImportedProject(parsed, file.name);
@@ -194,7 +194,7 @@ export const projectRepository: ProjectRepository = {
     };
 
     if (!(await this.saveProjectSnapshot(userId, normalizedSnapshot))) {
-      throw new Error("Impossibile salvare nel database del browser (IndexedDB).");
+      throw new Error("Unable to save to the browser database (IndexedDB).");
     }
 
     return normalizedSnapshot;
@@ -330,7 +330,7 @@ function openDatabase(): Promise<IDBDatabase> {
       };
 
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("Impossibile aprire IndexedDB."));
+      request.onerror = () => reject(request.error ?? new Error("Unable to open IndexedDB."));
     });
   }
 
@@ -340,15 +340,15 @@ function openDatabase(): Promise<IDBDatabase> {
 function requestAsPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Richiesta IndexedDB fallita."));
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
   });
 }
 
 function waitForTransaction(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(tx.error ?? new Error("Transazione IndexedDB annullata."));
-    tx.onerror = () => reject(tx.error ?? new Error("Transazione IndexedDB fallita."));
+    tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted."));
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed."));
   });
 }
 
@@ -447,7 +447,7 @@ function toStoredProjectRecord(value: unknown): StoredProjectRecord | null {
 
 function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapshot {
   if (!parsed || typeof parsed !== "object") {
-    throw new Error("File non riconosciuto: formato progetto mancante.");
+    throw new Error("Unrecognized file: missing project format.");
   }
 
   const candidate = parsed as LegacyProjectShape;
@@ -474,7 +474,7 @@ function parseImportedProject(parsed: unknown, fileName: string): ProjectSnapsho
 function extractLegacyProject(candidate: LegacyProjectShape, fileName: string): ProjectDocument {
   const model = candidate.model;
   if (!model || !Array.isArray(model.macros)) {
-    throw new Error("File non valido: 'model.macros' assente o non un array.");
+    throw new Error("Invalid file: 'model.macros' is missing or is not an array.");
   }
 
   const now = Date.now();
@@ -775,7 +775,7 @@ function slugify(s: string): string {
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "")
-    .slice(0, 60) || "progetto";
+    .slice(0, 60) || "project";
 }
 
 function ymd(ts: number): string {
@@ -787,11 +787,11 @@ function ymd(ts: number): string {
 export function formatRelative(ts: number): string {
   const diff = Date.now() - ts;
   const s = Math.round(diff / 1000);
-  if (s < 60) return "ora";
+  if (s < 60) return "just now";
   const m = Math.round(s / 60);
-  if (m < 60) return `${m} min fa`;
+  if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h} h fa`;
+  if (h < 24) return `${h} h ago`;
   const d = Math.round(h / 24);
-  return `${d} g fa`;
+  return `${d} d ago`;
 }

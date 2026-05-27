@@ -33,7 +33,7 @@ export function NewsItem({ item, macroId, onDelete, onRename }: Props) {
         {...attributes}
         {...listeners}
         className="text-ink-300 hover:text-ink-100 cursor-grab active:cursor-grabbing touch-none pt-1 shrink-0"
-        aria-label="Trascina"
+        aria-label="Drag"
       >
         <GripVertical size={14} />
       </button>
@@ -69,14 +69,14 @@ export function NewsItem({ item, macroId, onDelete, onRename }: Props) {
         <button
           onClick={onRename}
           className="w-6 h-6 rounded border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 flex items-center justify-center"
-          title="Modifica contenuto"
+          title="Edit content"
         >
           <Pencil size={11} />
         </button>
         <button
           onClick={onDelete}
           className="w-6 h-6 rounded border border-ink-600 hover:border-red-500 text-ink-300 hover:text-red-400 flex items-center justify-center"
-          title="Elimina"
+          title="Delete"
         >
           <Trash2 size={11} />
         </button>

@@ -3,6 +3,17 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/deploy.yml"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - "postcss.config.js"
+      - "tailwind.config.js"
+      - "src/**"
+      - "public/**"
   workflow_dispatch:
 
 permissions:
