@@ -114,7 +114,7 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
   function addSourcesLine() {
     const url = window.prompt("Source URL:", "https://");
     if (!url) return;
-    const label = window.prompt("Label (for example tweet, paper, blog):", "tweet");
+    const label = window.prompt("Label (for example: tweet, paper, blog):", "tweet");
     if (label === null) return;
     const html = `\n<p>Sources: <a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(
       label || "link"
