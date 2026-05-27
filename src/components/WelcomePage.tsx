@@ -45,7 +45,7 @@ export function WelcomePage({
       {/* Compact top bar */}
       <header className="px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex items-center gap-4">
         <div className="flex items-center font-semibold">
-          <BrandLogo className="h-9 w-auto" />
+          <BrandLogo variant="dark" className="h-9 w-auto" />
         </div>
         <div className="flex-1" />
         <span className="text-xs text-ink-300">
@@ -64,14 +64,15 @@ export function WelcomePage({
         <div className="max-w-5xl mx-auto px-6 py-12">
           <div className="text-center mb-12">
             <h1
-              className="font-bold tracking-tight leading-tight mb-3"
+              className="font-extralight tracking-tight leading-[1.05] mb-3 pb-[0.08em]"
               style={{
                 fontSize: "clamp(32px, 5vw, 56px)",
-                background: "linear-gradient(120deg, #ffffff 0%, #c4b8ff 50%, #5fffce 100%)",
+                fontFamily: "sentient, serif",
+                background: "linear-gradient(120deg, #ffffff 0%, #c4b8ff 45%, #5fffce 100%)",
                 WebkitBackgroundClip: "text",
                 backgroundClip: "text",
                 WebkitTextFillColor: "transparent",
-                letterSpacing: "-0.025em",
+                letterSpacing: "-0.03em",
               }}
             >
               Where would you like to start?

@@ -23,15 +23,16 @@ export function LoginPage({ onLogin }: Props) {
   }
 
   return (
-    <div className="min-h-full flex flex-col bg-ink-900 text-ink-100">
-      <div className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-xl">
-          <div className="text-center mb-10">
-            <BrandLogo variant="dark" className="h-16 w-auto mx-auto mb-6" />
+    <div className="min-h-screen flex flex-col bg-ink-900 text-ink-100">
+      <div className="flex-1 flex items-start justify-center px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:items-center lg:py-10">
+        <div className="w-full max-w-6xl grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(420px,520px)] lg:items-center lg:gap-10">
+          <div className="min-w-0 text-center lg:max-w-xl lg:text-left">
+            <BrandLogo variant="dark" className="h-16 w-auto max-w-full mx-auto mb-6 lg:mx-0" />
             <h1
-              className="font-bold tracking-tight leading-[0.95] mb-4"
+              className="font-extralight tracking-tight leading-[1.05] mb-4 pb-[0.08em]"
               style={{
-                fontSize: "clamp(48px, 8vw, 96px)",
+                fontSize: "clamp(36px, 6vw, 72px)",
+                fontFamily: "sentient, serif",
                 background: "linear-gradient(120deg, #ffffff 0%, #c4b8ff 45%, #5fffce 100%)",
                 WebkitBackgroundClip: "text",
                 backgroundClip: "text",
@@ -39,9 +40,12 @@ export function LoginPage({ onLogin }: Props) {
                 letterSpacing: "-0.03em",
               }}
             >
-              AI Socratic · Blog Maker
+              Blog Maker
             </h1>
-            <p className="text-ink-300 text-base max-w-md mx-auto">
+            <p
+              className="text-ink-300 text-base sm:text-lg md:text-xl lg:text-2xl leading-relaxed max-w-md mx-auto lg:mx-0"
+              style={{ fontFamily: "sentient, serif", fontStyle: "italic", fontWeight: 300 }}
+            >
               Reorder, edit, and customize an AI Socratic blog post directly in
               your browser.
             </p>
