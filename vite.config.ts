@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
   // Production uses a relative base so the app keeps working even if the repo slug changes.
   // In dev (npm run dev) we still use '/' so the app works at localhost root.
   base: command === 'build' ? './' : '/',
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   server: {
     proxy: {
       // Local dev proxy: requests to /_aisocratic/* are forwarded to aisocratic.org/*
