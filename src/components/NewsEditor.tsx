@@ -4,15 +4,15 @@ import type { NewsItem } from "../lib/parser";
 
 type Props = {
   item: NewsItem;
-  kind?: "News" | "Sezione";
+  kind?: "News" | "Section";
   onSave: (updates: { title: string; bodyHTML: string }) => void;
   onClose: () => void;
 };
 
 export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
-  const badge = kind === "Sezione" ? "H1" : `H${item.level}`;
+  const badge = kind === "Section" ? "H1" : `H${item.level}`;
   const badgeClass =
-    kind === "Sezione"
+    kind === "Section"
       ? "bg-gradient-to-r from-brand/30 to-mint/30 text-white"
       : item.level === 2
       ? "bg-brand/20 text-brand-400"
@@ -65,16 +65,16 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
 
   function replaceImage(idx: number) {
     const current = images[idx]?.src || "";
-    const url = window.prompt("Nuovo URL immagine:", current);
+    const url = window.prompt("New image URL:", current);
     if (!url) return;
     mutateImage(idx, (img) => img.setAttribute("src", url));
   }
   function deleteImage(idx: number) {
-    if (!window.confirm("Eliminare questa immagine?")) return;
+    if (!window.confirm("Delete this image?")) return;
     mutateImage(idx, (img) => img.remove());
   }
   function addImage() {
-    const url = window.prompt("URL della nuova immagine:", "");
+    const url = window.prompt("New image URL:", "");
     if (!url) return;
     const html = `\n<p><img src="${escapeAttr(url)}" alt="" /></p>`;
     if (bodyRef.current) {
@@ -85,9 +85,9 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
     }
   }
   function addLink() {
-    const url = window.prompt("URL del link:", "https://");
+    const url = window.prompt("Link URL:", "https://");
     if (!url) return;
-    const label = window.prompt("Testo del link:", "link");
+    const label = window.prompt("Link text:", "link");
     if (!label) return;
     const linkHTML = `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(
       label
@@ -112,9 +112,9 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
     }
   }
   function addSourcesLine() {
-    const url = window.prompt("URL della source:", "https://");
+    const url = window.prompt("Source URL:", "https://");
     if (!url) return;
-    const label = window.prompt("Etichetta (es. tweet, paper, blog):", "tweet");
+    const label = window.prompt("Label (for example tweet, paper, blog):", "tweet");
     if (label === null) return;
     const html = `\n<p>Sources: <a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(
       label || "link"
@@ -145,19 +145,19 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
             {badge}
           </span>
           <h2 className="flex-1 font-semibold text-ink-100">
-            Modifica {kind === "Sezione" ? "macro-sezione" : "news"}
+            Edit {kind === "Section" ? "section" : "story"}
           </h2>
           <button
             onClick={save}
             className="px-3 py-1.5 rounded-md bg-mint hover:brightness-110 text-ink-950 text-xs font-semibold flex items-center gap-1.5"
-            title="Salva (⌘S)"
+            title="Save (⌘S)"
           >
-            <Save size={12} /> Salva
+            <Save size={12} /> Save
           </button>
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-md border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center"
-            aria-label="Chiudi (Esc)"
+            aria-label="Close (Esc)"
           >
             <X size={14} />
           </button>
@@ -167,7 +167,7 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
         <div className="flex-1 overflow-y-auto scroll-thin p-5 space-y-5">
           <div>
             <label className="block text-[11px] uppercase tracking-widest font-bold text-ink-300 mb-2">
-              Titolo
+              Title
             </label>
             <input
               type="text"
@@ -181,14 +181,14 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[11px] uppercase tracking-widest font-bold text-ink-300">
-                {kind === "Sezione" ? "Intro della sezione" : "Contenuto"}
+                {kind === "Section" ? "Section intro" : "Content"}
               </label>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={addLink}
                   className="text-[10px] text-ink-300 hover:text-brand-400 border border-ink-600 hover:border-brand rounded px-2 py-1 flex items-center gap-1 transition"
-                  title="Aggiungi un link (anteprima seleziona il testo per linkarlo)"
+                  title="Add a link (select text in the preview to link it)"
                 >
                   <LinkIcon size={11} /> Link
                 </button>
@@ -196,7 +196,7 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
                   type="button"
                   onClick={addSourcesLine}
                   className="text-[10px] text-ink-300 hover:text-brand-400 border border-ink-600 hover:border-brand rounded px-2 py-1 flex items-center gap-1 transition"
-                  title="Aggiungi una riga 'Sources: …' in fondo"
+                  title="Add a 'Sources: …' line at the bottom"
                 >
                   <FileText size={11} /> Sources
                 </button>
@@ -225,18 +225,18 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[11px] uppercase tracking-widest font-bold text-ink-300">
-                Immagini ({images.length})
+                Images ({images.length})
               </label>
               <button
                 onClick={addImage}
                 className="text-[11px] text-ink-300 hover:text-brand-400 border border-dashed border-ink-600 hover:border-brand rounded-md px-2 py-1 flex items-center gap-1"
               >
-                <ImageIcon size={12} /> Aggiungi immagine
+                <ImageIcon size={12} /> Add image
               </button>
             </div>
             {images.length === 0 ? (
               <div className="text-[12px] text-ink-300 italic text-center py-6 border border-dashed border-ink-600 rounded-lg">
-                Nessuna immagine in questa news.
+                No images in this story.
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
@@ -257,17 +257,17 @@ export function NewsEditor({ item, kind = "News", onSave, onClose }: Props) {
                         type="button"
                         onClick={() => replaceImage(img.idx)}
                         className="flex-1 text-[10px] font-semibold py-1.5 px-1 rounded border border-ink-600 hover:bg-brand hover:border-brand hover:text-white text-ink-100 flex items-center justify-center gap-1 transition"
-                        title="Cambia URL"
+                        title="Change URL"
                       >
-                        <Replace size={11} /> Cambia
+                        <Replace size={11} /> Change
                       </button>
                       <button
                         type="button"
                         onClick={() => deleteImage(img.idx)}
                         className="flex-1 text-[10px] font-semibold py-1.5 px-1 rounded border border-ink-600 hover:bg-red-500 hover:border-red-500 hover:text-white text-ink-100 flex items-center justify-center gap-1 transition"
-                        title="Elimina"
+                        title="Delete"
                       >
-                        <Trash2 size={11} /> Elimina
+                        <Trash2 size={11} /> Delete
                       </button>
                     </div>
                   </div>

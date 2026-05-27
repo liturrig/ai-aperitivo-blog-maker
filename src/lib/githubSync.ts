@@ -206,7 +206,7 @@ export async function syncProjectToGitHub(
 
   if (existingIssue && remoteState && remoteState.revision !== (snapshot.syncState?.revision ?? null)) {
     throw new GitHubSyncConflictError(
-      "La revisione remota su GitHub è cambiata. Aggiorna il progetto da GitHub prima di sincronizzare di nuovo.",
+      "The remote GitHub revision changed. Refresh the project from GitHub before syncing again.",
       toRemoteProject(existingIssue, remoteState.project, remoteState.revision, remoteState.syncedAt, remoteState.seedProject, true)
     );
   }
@@ -290,12 +290,12 @@ export async function refreshProjectFromGitHub(
   const normalizedSettings = requireGitHubSyncSettings(settings);
   const issue = await resolveProjectIssue(normalizedSettings, projectId, sourceUrl, userId, remoteId ?? null);
   if (!issue) {
-    throw new Error("Nessun issue GitHub trovato per questo progetto.");
+    throw new Error("No GitHub issue found for this project.");
   }
 
   const parsedRemote = parseRemoteIssue(issue);
   if (parsedRemote.frontmatter.projectId !== projectId) {
-    throw new Error("L'issue GitHub configurato appartiene a un progetto diverso.");
+    throw new Error("The configured GitHub issue belongs to a different project.");
   }
 
   const remoteEvents = await listRemoteEvents(normalizedSettings, issue.number);
@@ -315,7 +315,7 @@ function normalizeGitHubSyncSettings(settings: GitHubSyncSettings): GitHubSyncSe
 function requireGitHubSyncSettings(settings: GitHubSyncSettings): GitHubSyncSettings {
   const normalized = normalizeGitHubSyncSettings(settings);
   if (!normalized.owner || !normalized.repo || !normalized.token) {
-    throw new GitHubSyncConfigurationError("Configura owner, repository e token GitHub prima di usare la sincronizzazione remota.");
+    throw new GitHubSyncConfigurationError("Configure the GitHub owner, repository, and token before using remote sync.");
   }
   return normalized;
 }
@@ -502,7 +502,7 @@ function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; 
   const body = issue.body ?? "";
   const match = body.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) {
-    throw new Error("Il body dell'issue GitHub non contiene frontmatter valido.");
+    throw new Error("The GitHub issue body does not contain valid frontmatter.");
   }
 
   const frontmatter = parseFrontmatter(match[1]);
@@ -516,12 +516,12 @@ function parseRemoteIssue(issue: GitHubIssue): { frontmatter: IssueFrontmatter; 
     typeof frontmatter.syncedAt !== "number" ||
     typeof frontmatter.userId !== "string"
   ) {
-    throw new Error("Il frontmatter dell'issue GitHub non è valido.");
+    throw new Error("The GitHub issue frontmatter is invalid.");
   }
 
   const jsonMatch = match[2].match(/```json\n([\s\S]*?)\n```/);
   if (!jsonMatch) {
-    throw new Error("Il body dell'issue GitHub non contiene uno snapshot JSON valido.");
+    throw new Error("The GitHub issue body does not contain a valid JSON snapshot.");
   }
 
   const parsed = JSON.parse(jsonMatch[1]) as unknown;
@@ -588,7 +588,7 @@ function toRemoteProjectDocument(project: ProjectDocument): ProjectDocument {
 
 function toLocalProjectDocument(value: unknown, frontmatter: IssueFrontmatter): ProjectDocument {
   if (!value || typeof value !== "object") {
-    throw new Error("Lo snapshot GitHub non contiene un progetto valido.");
+    throw new Error("The GitHub snapshot does not contain a valid project.");
   }
 
   const candidate = value as Partial<ProjectDocument> & {
@@ -603,7 +603,7 @@ function toLocalProjectDocument(value: unknown, frontmatter: IssueFrontmatter): 
     !candidate.model ||
     !Array.isArray(candidate.model.macros)
   ) {
-    throw new Error("Lo snapshot GitHub è incompleto.");
+    throw new Error("The GitHub snapshot is incomplete.");
   }
 
   return {
@@ -691,10 +691,10 @@ async function ensureSyncLabelExists(settings: GitHubSyncSettings, label: string
     await requestGitHub(settings, repoPath(settings, `/labels/${encodeURIComponent(label)}`));
   } catch (error) {
     if (!(error instanceof GitHubApiError)) {
-      throw new Error(`Impossibile verificare la label GitHub "${label}".`, { cause: error });
+      throw new Error(`Unable to verify the GitHub label "${label}".`, { cause: error });
     }
     if (error.status !== 404) {
-      throw new Error(`Impossibile verificare la label GitHub "${label}": ${error.message}`, {
+      throw new Error(`Unable to verify the GitHub label "${label}": ${error.message}`, {
         cause: error,
       });
     }
@@ -709,7 +709,7 @@ async function ensureSyncLabelExists(settings: GitHubSyncSettings, label: string
       });
     } catch (createError) {
       const message = createError instanceof Error ? createError.message : String(createError);
-      throw new Error(`Impossibile creare la label GitHub "${label}": ${message}`, {
+      throw new Error(`Unable to create the GitHub label "${label}": ${message}`, {
         cause: createError,
       });
     }

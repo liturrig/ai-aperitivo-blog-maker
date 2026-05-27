@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LogIn, Sparkles, AlertCircle } from "lucide-react";
+import { LogIn, AlertCircle } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
 
 type Props = {
@@ -18,7 +18,7 @@ export function LoginPage({ onLogin }: Props) {
     if (username.trim().toLowerCase() === VALID.username && password === VALID.password) {
       onLogin(username.trim().toLowerCase());
     } else {
-      setError("Credenziali non valide.");
+      setError("Invalid credentials.");
     }
   }
 
@@ -27,10 +27,7 @@ export function LoginPage({ onLogin }: Props) {
       <div className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-xl">
           <div className="text-center mb-10">
-            <BrandLogo className="h-16 w-auto mx-auto mb-6" />
-            <div className="inline-flex items-center gap-3 px-4 py-1.5 rounded-full bg-brand/15 border border-brand/30 text-brand-400 text-xs font-bold uppercase tracking-widest mb-6">
-              <Sparkles size={12} /> Editor blog AI Socratic
-            </div>
+            <BrandLogo variant="dark" className="h-16 w-auto mx-auto mb-6" />
             <h1
               className="font-bold tracking-tight leading-[0.95] mb-4"
               style={{
@@ -42,11 +39,11 @@ export function LoginPage({ onLogin }: Props) {
                 letterSpacing: "-0.03em",
               }}
             >
-              Blog Maker
+              AI Socratic · Blog Maker
             </h1>
             <p className="text-ink-300 text-base max-w-md mx-auto">
-              Riordina, modifica e personalizza un blog post di AI Socratic
-              direttamente nel browser.
+              Reorder, edit, and customize an AI Socratic blog post directly in
+              your browser.
             </p>
           </div>
 
@@ -57,7 +54,7 @@ export function LoginPage({ onLogin }: Props) {
           >
             <h2 className="text-lg font-semibold mb-5 flex items-center gap-2">
               <LogIn size={18} className="text-brand-400" />
-              Accedi
+              Sign in
             </h2>
 
             <div className="space-y-4">
@@ -109,7 +106,7 @@ export function LoginPage({ onLogin }: Props) {
                 className="w-full py-3 rounded-lg bg-gradient-to-r from-brand to-mint hover:brightness-110
                            text-ink-950 font-semibold flex items-center justify-center gap-2 transition"
               >
-                <LogIn size={15} /> Accedi
+                <LogIn size={15} /> Sign in
               </button>
             </div>
           </form>

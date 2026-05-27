@@ -167,13 +167,13 @@ export default function App() {
   const remoteStatus = useMemo(() => {
     if (syncBusy === "push") {
       return {
-        text: "Sincronizzazione cloud in corso…",
+        text: "Cloud sync in progress…",
         className: "text-brand-300",
       };
     }
     if (syncBusy === "pull") {
       return {
-        text: "Aggiornamento cloud in corso…",
+        text: "Cloud refresh in progress…",
         className: "text-brand-300",
       };
     }
@@ -185,30 +185,30 @@ export default function App() {
     }
     if (!remoteReady) {
       return {
-        text: "Cloud sync non disponibile",
+        text: "Cloud sync unavailable",
         className: "text-ink-300",
       };
     }
     if (!currentRemoteId) {
       return {
-        text: pendingOperationCount > 0 ? `Prima sincronizzazione in coda · ${pendingOperationCount} modifiche` : "Mai sincronizzato nel cloud",
+        text: pendingOperationCount > 0 ? `First sync queued · ${pendingOperationCount} changes` : "Never synced to the cloud",
         className: "text-ink-300",
       };
     }
     if (pendingOperationCount > 0) {
       return {
-        text: `Pubblicazione automatica in coda · ${pendingOperationCount} modifiche`,
+        text: `Auto-publish queued · ${pendingOperationCount} changes`,
         className: "text-amber-300",
       };
     }
     if (localAheadOfRemote) {
       return {
-        text: `Modifiche locali non pubblicate · rev ${shortRevision(currentRevision)}`,
+        text: `Local changes not published · rev ${shortRevision(currentRevision)}`,
         className: "text-amber-300",
       };
     }
     return {
-      text: `Cloud allineato · rev ${shortRevision(currentRevision)}${
+      text: `Cloud in sync · rev ${shortRevision(currentRevision)}${
         lastRemoteSyncAt ? ` · ${formatRelative(lastRemoteSyncAt)}` : ""
       }`,
       className: "text-mint",
@@ -434,13 +434,13 @@ export default function App() {
       const now = currentTimestamp();
       const project = buildProjectDocument(now);
       if (!project) {
-        setError("Impossibile salvare il progetto corrente.");
+        setError("Unable to save the current project.");
         return;
       }
       void (async () => {
         const snapshot = buildProjectSnapshot(now);
         if (!snapshot) {
-          setError("Impossibile salvare il progetto corrente.");
+          setError("Unable to save the current project.");
           return;
         }
         if (await projectRepository.saveProjectSnapshot(authUser, snapshot)) {
@@ -457,14 +457,14 @@ export default function App() {
     if (!model || !currentProjectId || !authUser) return;
     if (!remoteReady) {
       if (trigger === "manual") {
-        setSyncError("La sincronizzazione cloud non è disponibile in questa sessione.");
+        setSyncError("Cloud sync is not available in this session.");
       }
       return;
     }
     const now = currentTimestamp();
     const project = buildProjectDocument(now);
     if (!project) {
-      setSyncError("Impossibile preparare il progetto per la sincronizzazione cloud.");
+      setSyncError("Unable to prepare the project for cloud sync.");
       return;
     }
     const syncState = ensureSyncState(project, currentSyncState);
@@ -485,7 +485,7 @@ export default function App() {
 
     try {
       if (!(await projectRepository.saveProjectSnapshot(authUser, localSnapshot))) {
-        throw new Error("Impossibile salvare il progetto locale prima della sincronizzazione cloud.");
+        throw new Error("Unable to save the local project before cloud sync.");
       }
       const remote = await syncProjectToRemote(remoteSettings, authUser, localSnapshot);
       await projectRepository.saveProjectSnapshot(authUser, remote.snapshot);
@@ -622,7 +622,7 @@ export default function App() {
       setUrl(sourceUrl);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg + " — prova a cambiare CORS proxy.");
+      setError(msg + " — try changing the CORS proxy.");
     } finally {
       setLoading(false);
     }
@@ -639,7 +639,7 @@ export default function App() {
     if (!authUser) return;
     const snapshot = await projectRepository.loadProjectSnapshot(authUser, project.id);
     if (!snapshot) {
-      setError("Impossibile caricare il progetto salvato selezionato.");
+      setError("Unable to load the selected saved project.");
       return;
     }
     const hydratedProject = await hydrateProjectOriginalHTML(snapshot.project);
@@ -653,12 +653,12 @@ export default function App() {
   }
 
   async function removeSavedProject(p: ProjectDocument) {
-    if (!window.confirm(`Eliminare il progetto salvato "${p.title}"?`)) return;
+    if (!window.confirm(`Delete the saved project "${p.title}"?`)) return;
     if (!authUser) return;
     await projectRepository.deleteProject(authUser, p.id);
     await refreshSavedProjects();
     if (currentProjectId === p.id) {
-      // We just deleted the open project; bounce to dashboard
+      // We just deleted the open project; go back to the dashboard
       setCurrentProjectId(null);
       setCurrentSyncState(null);
       setLastSavedAt(null);
@@ -670,7 +670,7 @@ export default function App() {
 
   async function reloadFromOriginal() {
     if (!model || !currentProjectId) return;
-    if (!window.confirm("Scartare tutte le modifiche di questo progetto e ricaricarlo dall'originale?")) return;
+    if (!window.confirm("Discard all changes to this project and reload the original version?")) return;
     const project = buildProjectDocument(currentTimestamp());
     if (!project) return;
     const seedProject = currentSyncState?.seedProject ?? project;
@@ -699,7 +699,7 @@ export default function App() {
   async function executeRefreshFromRemote() {
     if (!currentProjectId || !authUser) return;
     if (!remoteReady) {
-      setSyncError("La sincronizzazione cloud non è disponibile in questa sessione.");
+      setSyncError("Cloud sync is not available in this session.");
       return;
     }
 
@@ -721,7 +721,7 @@ export default function App() {
         syncState: clearPendingOperations(hydratedProject, remote.snapshot.syncState),
       };
       if (!(await projectRepository.saveProjectSnapshot(authUser, nextSnapshot))) {
-        throw new Error("Impossibile salvare nel browser la versione ricevuta dal cloud.");
+        throw new Error("Unable to save the version received from the cloud in the browser.");
       }
       setCurrentSyncState(nextSnapshot.syncState ?? null);
       setLastSavedAt(nextSnapshot.project.savedAt);
@@ -1038,10 +1038,10 @@ export default function App() {
       bodyHTML: macro.introHTML,
       snippet: "",
     };
-    return { item: adapted, kind: "Sezione" as const };
+    return { item: adapted, kind: "Section" as const };
   }, [editing, model]);
   function addItem(macroId: string) {
-    const it = newItem("Nuova news");
+    const it = newItem("New story");
     const seedProject = buildProjectDocument(currentTimestamp());
     const currentMacro = model?.macros.find((entry) => entry.id === macroId);
     const index = currentMacro?.items.length ?? 0;
@@ -1057,7 +1057,7 @@ export default function App() {
     setEditing({ kind: "item", macroId, itemId: it.id });
   }
   function deleteMacro(macroId: string) {
-    if (!window.confirm("Eliminare l'intera macro-sezione?")) return;
+    if (!window.confirm("Delete the entire section?")) return;
     const seedProject = buildProjectDocument(currentTimestamp());
     setModel((m) => {
       if (!m) return m;
@@ -1066,7 +1066,7 @@ export default function App() {
     enqueueOperations([{ type: "delete-macro", macroId }], seedProject);
   }
   function addMacro() {
-    const mac = newMacro("Nuova macro-sezione");
+    const mac = newMacro("New section");
     const seedProject = buildProjectDocument(currentTimestamp());
     const index = model?.macros.length ?? 0;
     setModel((m) => (m ? { ...m, macros: [...m.macros, mac] } : m));
@@ -1137,17 +1137,15 @@ export default function App() {
       <header className="px-4 sm:px-6 py-3 border-b border-ink-600 bg-gradient-to-b from-ink-800 to-ink-900 flex flex-wrap items-center gap-3 sticky top-0 z-20">
         <button
           onClick={backToWelcome}
-          className="flex items-center gap-2 font-semibold hover:opacity-80 transition"
-          title="Torna alla dashboard"
+          className="flex items-center font-semibold hover:opacity-80 transition"
+          title="Back to dashboard"
         >
           <BrandLogo className="h-9 w-auto" />
-          <span className="hidden sm:inline text-sm tracking-tight">AI Socratic · Blog Maker</span>
-          <span className="sm:hidden text-sm tracking-tight">Blog Maker</span>
         </button>
 
         <div className="order-3 w-full min-w-0 lg:order-none lg:w-auto lg:flex-1 flex items-center gap-2">
           <span className="text-xs text-ink-300 truncate">
-            <span className="text-ink-100 font-medium">{model.header?.title || "(senza titolo)"}</span>
+            <span className="text-ink-100 font-medium">{model.header?.title || "(untitled)"}</span>
             <span className="opacity-60 mx-2">·</span>
             <code className="text-brand-400 truncate">{model.baseHref}</code>
           </span>
@@ -1158,16 +1156,16 @@ export default function App() {
             onClick={() => setFullscreen(true)}
             disabled={!previewURL}
             className="w-10 h-10 rounded-lg border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition"
-            title="Apri anteprima a schermo intero"
-            aria-label="Apri anteprima a schermo intero"
+            title="Open fullscreen preview"
+            aria-label="Open fullscreen preview"
           >
             <Maximize2 size={16} />
           </button>
           <button
             onClick={() => setMobileActionsOpen(true)}
             className="w-10 h-10 rounded-lg border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 flex items-center justify-center text-lg leading-none transition"
-            title="Apri azioni progetto"
-            aria-label="Apri azioni progetto"
+            title="Open project actions"
+            aria-label="Open project actions"
           >
             ⋯
           </button>
@@ -1178,17 +1176,17 @@ export default function App() {
             onClick={backToWelcome}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand
                        text-sm flex items-center gap-2 transition"
-            title="Torna alla dashboard"
+            title="Back to dashboard"
           >
-            <History size={13} /> Progetti
+            <History size={13} /> Projects
           </button>
           {lastSavedAt && model && (
             <span
               className="text-[11px] text-ink-300 flex items-center gap-1.5 mr-1"
-              title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
+              title={`Saved automatically in the browser · ${new Date(lastSavedAt).toLocaleString()}`}
             >
               <SaveIcon size={11} className="text-mint" />
-              Salvato {formatRelative(lastSavedAt)}
+              Saved {formatRelative(lastSavedAt)}
             </span>
           )}
           {model && (
@@ -1203,19 +1201,19 @@ export default function App() {
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             title={
               remoteReady
-                ? "Forza subito l'invio del batch corrente al cloud"
-               : "La sincronizzazione cloud non è disponibile in questa sessione"
+                ? "Send the current batch to the cloud right away"
+               : "Cloud sync is not available in this session"
             }
           >
-            <Cloud size={13} /> Invia ora
+            <Cloud size={13} /> Sync now
           </button>
           <button
             onClick={refreshFromRemote}
             disabled={!model || syncBusy !== null || !remoteReady}
             className="px-3 py-2 rounded-lg border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Ricarica questo progetto dalla versione pubblicata nel cloud"
+            title="Reload this project from the published cloud version"
           >
-            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna cloud
+            <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh cloud
           </button>
           <button
             onClick={saveNow}
@@ -1227,15 +1225,15 @@ export default function App() {
                            ? "bg-mint border-mint text-ink-950 font-semibold"
                            : "border-ink-600 hover:border-mint hover:text-mint"
                        }`}
-            title="Salva ora il progetto"
+            title="Save the project now"
           >
             {justSaved ? (
               <>
-                <Check size={14} /> Salvato!
+                <Check size={14} /> Saved!
               </>
             ) : (
               <>
-                <SaveIcon size={13} /> Salva
+                <SaveIcon size={13} /> Save
               </>
             )}
           </button>
@@ -1252,15 +1250,15 @@ export default function App() {
             disabled={!model}
             className="px-3 py-2 rounded-lg bg-mint hover:brightness-110 text-ink-950
                        text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
-            title="Esporta il progetto come file JSON (puoi mandarlo a un amico)"
+            title="Export the project as a JSON file"
           >
-            <FileJson size={14} /> Esporta JSON
+            <FileJson size={14} /> Export JSON
           </button>
           <span className="text-xs text-ink-300 capitalize hidden sm:block">{authUser}</span>
           <button
             onClick={handleLogout}
             className="px-2.5 py-2 rounded-lg border border-ink-600 hover:border-red-500 hover:text-red-400 text-xs flex items-center gap-1.5 transition"
-            title="Logout"
+            title="Sign out"
           >
             <LogOut size={12} />
           </button>
@@ -1289,9 +1287,9 @@ export default function App() {
               <div className="flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div>
-                  <div className="font-medium">La versione nel cloud sostituirà le modifiche locali non ancora pubblicate.</div>
+                  <div className="font-medium">The cloud version will replace local changes that have not been published yet.</div>
                   <div className="mt-1 text-amber-200">
-                    Se vuoi mantenere il lavoro corrente, usa prima “Invia ora”.
+                    If you want to keep your current work, use “Sync now” first.
                   </div>
                 </div>
               </div>
@@ -1300,13 +1298,13 @@ export default function App() {
                   onClick={() => setPendingRemoteRefresh(false)}
                   className="px-3 py-2 rounded-lg border border-ink-600 hover:border-ink-500 text-xs transition"
                 >
-                  Annulla
+                  Cancel
                 </button>
                 <button
                   onClick={() => void executeRefreshFromRemote()}
                   className="px-3 py-2 rounded-lg bg-amber-400 hover:brightness-110 text-ink-950 text-xs font-semibold transition"
                 >
-                  Sostituisci con cloud
+                  Replace with cloud
                 </button>
               </div>
             </div>
@@ -1319,24 +1317,24 @@ export default function App() {
               <div className="mb-6 rounded-2xl border border-ink-600 bg-gradient-to-br from-ink-800 to-ink-700 p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[10px] uppercase tracking-widest font-bold text-brand-400 bg-brand/15 px-2 py-1 rounded">
-                    Intestazione · fissa
+                    Header · fixed
                   </span>
                   {model.header.meta && (
                     <span className="text-xs text-ink-300">{model.header.meta}</span>
                   )}
                 </div>
                 <h2 className="text-xl font-semibold text-ink-100 leading-tight">
-                  {model.header.title || "(senza titolo)"}
+                  {model.header.title || "(untitled)"}
                 </h2>
               </div>
 
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-[11px] uppercase tracking-widest font-bold text-ink-300">
-                  Macro-sezioni · trascina le card per riordinare
+                  Sections · drag cards to reorder
                 </h3>
                 <span className="text-xs text-ink-300">
-                  {model.macros.length} sezioni ·{" "}
-                  {model.macros.reduce((acc, m) => acc + m.items.length, 0)} news
+                  {model.macros.length} sections ·{" "}
+                  {model.macros.reduce((acc, m) => acc + m.items.length, 0)} stories
                 </span>
               </div>
 
@@ -1371,14 +1369,14 @@ export default function App() {
                            text-ink-300 hover:text-brand-400 rounded-xl py-3 text-sm
                            flex items-center justify-center gap-2 transition"
               >
-                <Plus size={14} /> Aggiungi macro-sezione
+                <Plus size={14} /> Add section
               </button>
             </>
           )}
 
           <details className="mt-6 text-xs text-ink-300">
             <summary className="cursor-pointer hover:text-ink-100">
-              CORS proxy (cambia se il caricamento fallisce)
+              CORS proxy (change it if loading fails)
             </summary>
             <div className="mt-2 flex gap-2 flex-wrap">
               {PROXIES.map((p, i) => (
@@ -1409,12 +1407,12 @@ export default function App() {
         <section className="border-t border-ink-600 p-4 sm:p-6 flex flex-col min-w-0 min-h-[65vh] lg:min-h-0 lg:border-t-0 lg:overflow-hidden">
           <div className="flex flex-col gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-[11px] uppercase tracking-widest font-bold text-ink-300">
-              Anteprima live
+              Live preview
             </h3>
             <div className="flex flex-wrap items-center gap-2">
               {hasChanges && (
                 <span className="text-[10px] uppercase tracking-widest font-bold text-mint bg-mint/10 px-2 py-1 rounded">
-                  Modificato
+                  Modified
                 </span>
               )}
               {previewEditMode ? (
@@ -1422,16 +1420,16 @@ export default function App() {
                   <button
                     onClick={discardPreviewEdit}
                     className="px-2.5 py-1.5 rounded-md border border-ink-600 hover:border-red-500 hover:text-red-400 text-xs flex items-center gap-1.5 transition"
-                    title="Scarta tutte le modifiche fatte in modalità modifica e torna alla versione precedente"
+                    title="Discard all changes made in edit mode and return to the previous version"
                   >
-                    <X size={12} /> Scarta modifiche
+                    <X size={12} /> Discard changes
                   </button>
                   <button
                     onClick={commitPreviewEdit}
                     className="px-2.5 py-1.5 rounded-md bg-mint hover:brightness-110 text-ink-950 text-xs font-semibold flex items-center gap-1.5"
-                    title="Conferma le modifiche e torna alla preview"
+                    title="Confirm changes and return to the preview"
                   >
-                    ✓ Conferma
+                    ✓ Confirm
                   </button>
                 </>
               ) : (
@@ -1441,9 +1439,9 @@ export default function App() {
                   className="px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition border
                              border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400
                              disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Modifica in linea direttamente nell'anteprima"
+                  title="Edit inline directly in the preview"
                 >
-                  <Pencil size={12} /> Modifica
+                  <Pencil size={12} /> Edit
                 </button>
               )}
               <button
@@ -1452,9 +1450,9 @@ export default function App() {
                 className="px-2.5 py-1.5 rounded-md border border-ink-600 hover:border-brand
                            text-ink-300 hover:text-brand-400 disabled:opacity-40 disabled:cursor-not-allowed
                            text-xs flex items-center gap-1.5 transition"
-                title="Apri anteprima a schermo intero"
+                title="Open fullscreen preview"
               >
-                <Maximize2 size={12} /> Schermo intero
+                <Maximize2 size={12} /> Full screen
               </button>
             </div>
           </div>
@@ -1468,7 +1466,7 @@ export default function App() {
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-ink-500 bg-ink-800">
-                <span className="text-sm">L'anteprima apparirà qui dopo il caricamento.</span>
+                <span className="text-sm">The preview will appear here after loading.</span>
               </div>
             )}
           </div>
@@ -1487,14 +1485,14 @@ export default function App() {
             <div className="flex items-center justify-between gap-3 mb-1">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-ink-100 truncate">
-                  {model.header?.title || "(senza titolo)"}
+                  {model.header?.title || "(untitled)"}
                 </div>
                 <div className="text-[11px] text-ink-300 truncate capitalize">{authUser}</div>
               </div>
               <button
                 onClick={() => setMobileActionsOpen(false)}
                 className="w-9 h-9 rounded-lg border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center"
-                aria-label="Chiudi azioni progetto"
+                aria-label="Close project actions"
               >
                 <X size={14} />
               </button>
@@ -1503,10 +1501,10 @@ export default function App() {
             {lastSavedAt && (
               <div
                 className="text-[11px] text-ink-300 flex items-center gap-1.5 px-1 pb-1"
-                title={`Salvato automaticamente nel browser · ${new Date(lastSavedAt).toLocaleString()}`}
+                title={`Saved automatically in the browser · ${new Date(lastSavedAt).toLocaleString()}`}
               >
                 <SaveIcon size={11} className="text-mint" />
-                Salvato {formatRelative(lastSavedAt)}
+                Saved {formatRelative(lastSavedAt)}
               </div>
             )}
             <div className={`text-[11px] flex items-center gap-1.5 px-1 pb-1 ${remoteStatus.className}`}>
@@ -1520,7 +1518,7 @@ export default function App() {
               }}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition"
             >
-              <History size={14} /> Progetti
+              <History size={14} /> Projects
             </button>
             <button
               onClick={() => {
@@ -1530,7 +1528,7 @@ export default function App() {
               disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Cloud size={13} /> Invia ora
+              <Cloud size={13} /> Sync now
             </button>
             <button
               onClick={() => {
@@ -1540,7 +1538,7 @@ export default function App() {
               disabled={!model || syncBusy !== null || !remoteReady}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-brand text-sm flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Aggiorna cloud
+              <RefreshCw size={13} className={syncBusy === "pull" ? "animate-spin" : ""} /> Refresh cloud
             </button>
             <button
               onClick={() => {
@@ -1556,11 +1554,11 @@ export default function App() {
             >
               {justSaved ? (
                 <>
-                  <Check size={14} /> Salvato!
+                  <Check size={14} /> Saved!
                 </>
               ) : (
                 <>
-                  <SaveIcon size={13} /> Salva
+                  <SaveIcon size={13} /> Save
                 </>
               )}
             </button>
@@ -1582,7 +1580,7 @@ export default function App() {
               disabled={!model}
               className="w-full px-3 py-3 rounded-xl bg-mint hover:brightness-110 text-ink-950 text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
             >
-              <FileJson size={14} /> Esporta JSON
+              <FileJson size={14} /> Export JSON
             </button>
             <button
               onClick={() => {
@@ -1591,13 +1589,13 @@ export default function App() {
               }}
               className="w-full px-3 py-3 rounded-xl border border-ink-600 hover:border-red-500 hover:text-red-400 text-sm flex items-center gap-2 transition"
             >
-              <LogOut size={13} /> Logout
+              <LogOut size={13} /> Sign out
             </button>
           </div>
         </div>
       )}
 
-      {/* Editor modal (news or macro-sezione) */}
+      {/* Editor modal (story or section) */}
       {editingTarget && (
         <NewsEditor
           key={editingTarget.item.id + ":" + editingTarget.kind}
@@ -1614,26 +1612,26 @@ export default function App() {
           <div className="flex items-center justify-between px-5 py-3 border-b border-ink-600 bg-ink-900">
             <div className="text-sm font-medium text-ink-100 flex items-center gap-2">
               <Newspaper size={14} className="text-brand-400" />
-              Anteprima · {model?.header.title || "Preview"}
+              Preview · {model?.header.title || "Preview"}
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={exportCurrent}
                 className="px-3 py-1.5 rounded-md bg-mint text-ink-950 text-xs font-semibold flex items-center gap-1.5"
               >
-                <FileJson size={12} /> Esporta JSON
+                <FileJson size={12} /> Export JSON
               </button>
               <button
                 onClick={() => setFullscreen(false)}
                 className="px-3 py-1.5 rounded-md border border-ink-600 hover:border-brand text-xs flex items-center gap-1.5"
-                title="Esci (Esc)"
+                title="Close (Esc)"
               >
-                <Minimize2 size={12} /> Esci
+                <Minimize2 size={12} /> Close
               </button>
               <button
                 onClick={() => setFullscreen(false)}
                 className="w-8 h-8 rounded-md border border-ink-600 hover:border-red-500 hover:text-red-400 flex items-center justify-center"
-                aria-label="Chiudi"
+                aria-label="Close"
               >
                 <X size={14} />
               </button>
@@ -1641,7 +1639,7 @@ export default function App() {
           </div>
           <iframe
             src={previewURL}
-            title="Preview fullscreen"
+            title="Fullscreen preview"
             className="flex-1 w-full bg-[#0c0d11]"
             sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals"
           />

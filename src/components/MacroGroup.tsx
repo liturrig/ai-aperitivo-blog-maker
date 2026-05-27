@@ -76,7 +76,7 @@ export function MacroGroup({
           {...attributes}
           {...listeners}
           className="text-ink-300 hover:text-ink-100 cursor-grab active:cursor-grabbing touch-none shrink-0"
-          aria-label="Trascina macro-sezione"
+          aria-label="Drag section"
         >
           <GripVertical size={16} />
         </button>
@@ -93,14 +93,14 @@ export function MacroGroup({
         <button
           onClick={onRenameMacro}
           className="w-7 h-7 rounded-md border border-ink-600 hover:border-brand text-ink-300 hover:text-brand-400 flex items-center justify-center shrink-0"
-          title="Rinomina"
+          title="Rename"
         >
           <Pencil size={12} />
         </button>
         <button
           onClick={onDeleteMacro}
           className="w-7 h-7 rounded-md border border-ink-600 hover:border-red-500 text-ink-300 hover:text-red-400 flex items-center justify-center shrink-0"
-          title="Elimina macro-sezione"
+          title="Delete section"
         >
           <Trash2 size={12} />
         </button>
@@ -117,7 +117,7 @@ export function MacroGroup({
             className="group/intro flex gap-2 items-start rounded-lg border border-dashed border-ink-600
                        bg-ink-800/50 hover:bg-ink-700 hover:border-brand/60 transition-colors
                        px-2.5 py-2 cursor-pointer"
-            title="Modifica intro della sezione"
+            title="Edit section intro"
           >
             <span className="shrink-0 text-[9px] font-bold rounded px-1.5 py-0.5 bg-gradient-to-r from-brand/30 to-mint/30 text-white mt-0.5">
               INTRO
@@ -145,15 +145,15 @@ export function MacroGroup({
             className="self-start text-[11px] text-ink-300 hover:text-brand-400
                        border border-dashed border-ink-600 hover:border-brand
                        rounded-md px-2 py-1 flex items-center gap-1 transition"
-            title="Aggiungi un'intro a questa sezione"
+            title="Add an intro to this section"
           >
-            <Plus size={12} /> Aggiungi intro
+            <Plus size={12} /> Add intro
           </button>
         )}
         <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
           {macro.items.length === 0 ? (
             <div className="text-[11px] text-ink-300 italic px-2 py-3 text-center border border-dashed border-ink-600 rounded-lg">
-              Trascina qui una news o usa “+ Aggiungi news”.
+             Drag a story here or use “+ Add story”.
             </div>
           ) : (
             macro.items.map((it) => (
@@ -174,7 +174,7 @@ export function MacroGroup({
                      border border-dashed border-ink-600 hover:border-brand
                      rounded-md px-2 py-1 flex items-center gap-1 transition"
         >
-          <Plus size={12} /> Aggiungi news
+          <Plus size={12} /> Add story
         </button>
       </div>
     </div>
